@@ -45,8 +45,8 @@ run_review() {
     echo "$unprocessed" | python3 -c "
 import sys, json
 for d in json.load(sys.stdin):
-    title = d['title'].replace('\t', ' ')
-    body = d['body'][:2000].replace('\t', ' ')
+    title = d.get('title', '').replace('\t', ' ')
+    body = d.get('body', '').replace('\t', ' ')[:2000]
     print(f\"{d['number']}\t{title}\t{body}\")
 " 2>/dev/null | while IFS=$'\t' read -r num title body; do
         [ -z "$num" ] && continue
