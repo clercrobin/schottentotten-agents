@@ -115,10 +115,27 @@ else: print('skipped')
 **CI:** $run_url
 **Staging:** ${DEPLOY_URL:-N/A}" "$AGENT_QUALITY_GATE" || true
 
+        # Build changelog: what's in staging that's not in main
+        local changelog
+        cd "$TARGET_PROJECT"
+        changelog=$(git log --oneline "origin/main..origin/$staging_branch" --no-merges 2>/dev/null | head -20)
+        local pr_list
+        pr_list=$(git log --oneline "origin/main..origin/$staging_branch" --no-merges 2>/dev/null | grep -oE '#[0-9]+' | sort -u | tr '\n' ' ')
+        local commit_count
+        commit_count=$(git log --oneline "origin/main..origin/$staging_branch" --no-merges 2>/dev/null | wc -l | tr -d ' ')
+
         # Always NEW discussion — each staging state gets its own approval request
         post_discussion "$CAT_DECISIONS" "🚀 Ready for prod — \`$run_sha\`" \
 "**@${GITHUB_OWNER}** — Staging is green. All gates passed.
 
+## What's in this release
+**$commit_count changes** | PRs: $pr_list
+
+\`\`\`
+$changelog
+\`\`\`
+
+## Gates
 | Gate | Status |
 |------|--------|
 | Unit tests | $unit_icon |
@@ -129,12 +146,11 @@ else: print('skipped')
 **Test staging:** ${DEPLOY_URL:-N/A}
 **CI run:** $run_url
 
-**To ship to prod:** merge \`$staging_branch → main\`
-
-Reply here with your decision:
-- **approve** — I've tested staging, ship it
-- **hold** — not yet, need more testing
-- **reject** — issues found, don't ship" "$AGENT_QUALITY_GATE" || true
+---
+Reply:
+- **approve** — ship it
+- **hold** — need more testing
+- **reject** — issues found" "$AGENT_QUALITY_GATE" || true
 
     else
         log "❌ BLOCKED — $run_sha"
