@@ -77,8 +77,8 @@ except (KeyError, json.JSONDecodeError):
     log "🎯 Picked up approved plan #$task_num: $task_title"
 
     cd "$TARGET_PROJECT"
-    local base_branch
-    base_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || echo "main")
+    # Use DEPLOY_BRANCH (staging) as base — PRs never target main directly
+    local base_branch="${DEPLOY_BRANCH:-staging}"
 
     # Deterministic branch name (same across retries for resumability)
     local branch_name
