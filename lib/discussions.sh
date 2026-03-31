@@ -262,6 +262,9 @@ get_discussions() {
           }
         }') || { echo "[]"; return 1; }
 
+    # Sanitize control characters from discussion bodies before JSON parsing
+    raw=$(echo "$raw" | tr -d '\000-\010\013\014\016-\037')
+
     _check_graphql_response "$raw" || { echo "[]"; return 1; }
 
     local env_tag="${ENV_NAME:-prod}"
@@ -318,6 +321,9 @@ get_unprocessed() {
             }
           }
         }') || { echo "[]"; return 1; }
+
+    # Sanitize control characters from discussion bodies before JSON parsing
+    raw=$(echo "$raw" | tr -d '\000-\010\013\014\016-\037')
 
     _check_graphql_response "$raw" || { echo "[]"; return 1; }
 
