@@ -375,7 +375,7 @@ except: pass
             }
           }
         }' --jq '[.data.repository.discussion.comments.nodes[].body] | join("\n---\n")' 2>/dev/null)
-        plan_body=$(printf '%s' "$plan_body" | python3 -c "import sys; print(sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})[:8000])" 2>/dev/null)
+        plan_body=$(printf '%s' "$plan_body" | python3 -c "import sys; print(sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})[:15000])" 2>/dev/null)
 
         [ -z "$num" ] && continue
         # Title status is the gate, not processed.log
