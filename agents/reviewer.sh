@@ -39,16 +39,8 @@ run_review() {
     log "  Found: ${#unprocessed} chars"
     rm -f "$_tmpfile"
     [ -z "$unprocessed" ] && { log "No PRs to review."; return 0; }
-    # Wrap back into JSON array for the downstream parser
-    unprocessed="[$(echo "$unprocessed" | paste -sd ',' -)]"
-
-    echo "$unprocessed" | python3 -c "
-import sys, json
-for d in json.load(sys.stdin):
-    title = d.get('title', '').replace('\t', ' ')
-    body = d.get('body', '').replace('\t', ' ')[:2000]
-    print(f\"{d['number']}\t{title}\t{body}\")
-" 2>/dev/null | while IFS=$'\t' read -r num title body; do
+    # Parse into tab-separated lines
+    echo "[$unprocessed]" | python3 "$SCRIPT_DIR/../lib/parse_review_items.py" 2>/dev/null | while IFS=$'\t' read -r num title body; do
         [ -z "$num" ] && continue
 
         is_processed "$num" "$AGENT" "reviewed" && continue
