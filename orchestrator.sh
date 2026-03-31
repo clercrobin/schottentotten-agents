@@ -126,129 +126,133 @@ run_cycle() {
     CYCLE=$((CYCLE + 1))
     CYCLE_SESSIONS=0
     log "═══ CYCLE $CYCLE ═══"
-    log_event "orchestrator" "CYCLE_START" "Cycle $CYCLE (budget: ${MAX_SESSIONS_PER_CYCLE:-25} sessions)"
+    log_event "orchestrator" "CYCLE_START" "Cycle $CYCLE"
 
     # Health check every 10 cycles
     if [ $((CYCLE % 10)) -eq 1 ]; then
         if ! health_check; then
             log "⚠️  Health check failed — pausing 60s"
             sleep 60
-            if ! health_check; then
-                log "❌ Health check still failing — skipping this cycle"
-                log_event "orchestrator" "HEALTH_FAIL" "Two consecutive health check failures"
-                return 0  # Don't crash — just skip this cycle
-            fi
+            health_check || { log "❌ Still failing — skip"; return 0; }
         fi
         rotate_logs
     fi
 
-    # ── Queue checks (0 sessions) ──────────────
+    # ── Read state (all shell, 0 sessions) ────────────────
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
     local staging_branch="${DEPLOY_BRANCH:-staging}"
     local focus_mode="${FOCUS_MODE:-false}"
+
+    # One API call to get all open discussion titles
+    local all_titles
+    all_titles=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        discussions(first: 20, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes { title category { name } }
+        }
+      }
+    }' --jq '.data.repository.discussions.nodes[] | "\(.category.name)\t\(.title)"' 2>/dev/null || echo "")
+
+    local has_triage has_planning has_approved has_review has_decisions
+    has_triage=$(echo "$all_titles" | grep -c "\[TRIAGE\]" || echo "0")
+    has_planning=$(echo "$all_titles" | grep -c "\[PLANNING\]" || echo "0")
+    has_approved=$(echo "$all_titles" | grep -c "\[APPROVED\]" || echo "0")
+    has_review=$(echo "$all_titles" | grep -c "\[REVIEW\]" || echo "0")
+    has_decisions=$(echo "$all_titles" | grep -c "Decision needed" || echo "0")
 
     local has_open_prs
     has_open_prs=$(gh pr list --repo "$target_repo" --state open --base "$staging_branch" --json number --jq 'length' 2>/dev/null || echo "0")
     local has_new_issues
     has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
 
-    log "  PRs: $has_open_prs | Issues: $has_new_issues | Focus: $focus_mode"
+    # Check staging CI status (shell)
+    local staging_ci
+    staging_ci=$(gh run list --repo "$target_repo" --branch "$staging_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
 
-    # ════════════════════════════════════════════
-    # PHASE 1: DISCOVER (human input always, scans only in normal mode)
-    # ════════════════════════════════════════════
+    log "  State: triage=$has_triage planning=$has_planning approved=$has_approved review=$has_review prs=$has_open_prs ci=$staging_ci"
+
+    # ── Dispatch: pick the most urgent action ─────────────
+    #
+    # Priority order (highest first):
+    #   1. Human input (always)
+    #   2. Staging CI failed → create fix task
+    #   3. PRs need review → reviewer + security
+    #   4. Approved items → engineer builds
+    #   5. Planning items → CTO approves
+    #   6. Triage items → planner plans
+    #   7. Staging CI green, no work → quality gate Q&A
+    #   8. Nothing → scan for new work (normal mode)
+    #   9. Learn from recent work
+
+    # ── 1. Human input (always, even in focus mode) ──
     if [ "$has_new_issues" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
     fi
-
-    # Check Q&A for human decisions (shell check before Claude session)
-    local has_decisions
-    has_decisions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title category { name } } } } }' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Q&A") | select(.title | contains("Decision"))] | length' 2>/dev/null || echo "0")
     if [ "$has_decisions" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
     fi
 
-    # CTO triage — only if there are open triage discussions to review
-    local has_triage
-    has_triage=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title } } } }' --jq '[.data.repository.discussions.nodes[] | select(.title | contains("TRIAGE"))] | length' 2>/dev/null || echo "0")
-    if [ "$has_triage" -gt 0 ]; then
-        run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
+    # ── 2. Staging CI failed → quality gate creates fix task ──
+    if [ "$staging_ci" = "failure" ]; then
+        log "  → Staging CI failed — checking quality gate"
+        run_step "$SCRIPT_DIR/agents/quality-gate.sh" "check"
     fi
 
-    # Scans — only in normal mode, and only when there's no work in progress
-    # This prevents flooding triage when there are already items being worked on
-    if [ "$focus_mode" != "true" ] && [ $((CYCLE % 5)) -eq 1 ]; then
-        local open_triage
-        open_triage=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:1, states:OPEN) { totalCount } } }' --jq '.data.repository.discussions.totalCount' 2>/dev/null || echo "0")
-        if [ "$open_triage" -le 2 ]; then
-            run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
-            run_step "$SCRIPT_DIR/agents/security.sh" "scan"
-        else
-            log "⏭️  Scans: $open_triage items already open — finish those first"
-        fi
-    fi
-
-    # ════════════════════════════════════════════
-    # PHASE 2: PLAN (skip if nothing to plan/approve)
-    # ════════════════════════════════════════════
-    if [ "$has_triage" -gt 0 ]; then
-        run_step "$SCRIPT_DIR/agents/planner.sh" "plan"
-    fi
-
-    local has_planning
-    has_planning=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title } } } }' --jq '[.data.repository.discussions.nodes[] | select(.title | contains("PLANNING"))] | length' 2>/dev/null || echo "0")
-    if [ "$has_planning" -gt 0 ]; then
-        run_step "$SCRIPT_DIR/agents/cto.sh" "approve-plans"
-    fi
-
-    # ════════════════════════════════════════════
-    # PHASE 3: BUILD (skip if nothing approved to build)
-    # ════════════════════════════════════════════
-    local has_approved
-    has_approved=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title } } } }' --jq '[.data.repository.discussions.nodes[] | select(.title | contains("APPROVED"))] | length' 2>/dev/null || echo "0")
-    if [ "$has_approved" -gt 0 ]; then
-        run_step "$SCRIPT_DIR/agents/senior-engineer.sh" "work"
-    fi
-
-    # ════════════════════════════════════════════
-    # PHASE 4: VERIFY
-    # ════════════════════════════════════════════
+    # ── 3. PRs need review → review + security + ship ──
     if [ "$has_open_prs" -gt 0 ]; then
+        log "  → $has_open_prs PRs open — review + ship"
         run_step "$SCRIPT_DIR/agents/test-runner.sh" "verify"
         run_step "$SCRIPT_DIR/agents/reviewer.sh" "review"
         run_step "$SCRIPT_DIR/agents/security.sh" "review"
         run_step "$SCRIPT_DIR/agents/senior-engineer.sh" "respond-reviews"
-    else
-        log "⏭️  Verify: no open PRs — skipping"
-    fi
-
-    # ════════════════════════════════════════════
-    # PHASE 5: SHIP (0 sessions)
-    # ════════════════════════════════════════════
-    if [ "$has_open_prs" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/cto.sh" "review-prs"
-    fi
-    run_step "$SCRIPT_DIR/agents/devops.sh" "staging"
-    run_step "$SCRIPT_DIR/agents/devops.sh" "deploy-verify"
-    run_step "$SCRIPT_DIR/agents/sre.sh" "monitor"
-    run_step "$SCRIPT_DIR/agents/quality-gate.sh" "check"
 
-    # ════════════════════════════════════════════
-    # PHASE 6: LEARN (both modes — compounds knowledge after merges)
-    # ════════════════════════════════════════════
+    # ── 4. Approved items → engineer builds ──
+    elif [ "$has_approved" -gt 0 ]; then
+        log "  → $has_approved approved items — engineer builds"
+        run_step "$SCRIPT_DIR/agents/senior-engineer.sh" "work"
+
+    # ── 5. Planning items → CTO approves ──
+    elif [ "$has_planning" -gt 0 ]; then
+        log "  → $has_planning plans awaiting approval"
+        run_step "$SCRIPT_DIR/agents/cto.sh" "approve-plans"
+
+    # ── 6. Triage items → planner plans ──
+    elif [ "$has_triage" -gt 0 ]; then
+        log "  → $has_triage triage items — planner plans"
+        run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
+        run_step "$SCRIPT_DIR/agents/planner.sh" "plan"
+
+    # ── 7. Staging green, nothing in progress → quality gate ──
+    elif [ "$staging_ci" = "success" ] && [ "$has_open_prs" -eq 0 ]; then
+        log "  → Staging green, no work — quality gate check"
+        run_step "$SCRIPT_DIR/agents/devops.sh" "deploy-verify"
+        run_step "$SCRIPT_DIR/agents/sre.sh" "monitor"
+        run_step "$SCRIPT_DIR/agents/quality-gate.sh" "check"
+
+    # ── 8. Nothing to do → scan for new work (normal mode) ──
+    elif [ "$focus_mode" != "true" ] && [ $((CYCLE % 5)) -eq 1 ]; then
+        log "  → Nothing in progress — scanning for new work"
+        run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
+        run_step "$SCRIPT_DIR/agents/security.sh" "scan"
+
+    # ── 9. Truly idle ──
+    else
+        log "  → Nothing to do"
+    fi
+
+    # ── Learn from recent work (after dispatch, both modes) ──
     local has_merged_work
     has_merged_work=$(gh pr list --repo "$target_repo" --state merged --base "$staging_branch" --json mergedAt --jq "[.[] | select(.mergedAt > \"$(date -u -v-1H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '2000-01-01')\")]| length" 2>/dev/null || echo "0")
     if [ "$has_merged_work" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/compound.sh" "extract"
     fi
-
     if [ $((CYCLE % 5)) -eq 0 ]; then
         run_step "$SCRIPT_DIR/agents/self-improve.sh" "learn"
     fi
 
-    # ════════════════════════════════════════════
-    # PERIODIC AUDITS (normal mode only — creates new triage items)
-    # ════════════════════════════════════════════
+    # ── Periodic audits (normal mode only, staggered) ──
     if [ "$focus_mode" != "true" ]; then
         case $((CYCLE % 10)) in
             1) run_step "$SCRIPT_DIR/agents/security.sh" "audit" ;;
@@ -258,14 +262,6 @@ run_cycle() {
             9) run_step "$SCRIPT_DIR/agents/sre.sh" "env-audit" ;;
             0) run_step "$SCRIPT_DIR/agents/qa-writer.sh" "generate" ;;
         esac
-
-        if [ $((CYCLE % 5)) -eq 0 ]; then
-            run_step "$SCRIPT_DIR/agents/quality-gate.sh" "report"
-        fi
-
-        if [ $((CYCLE % 20)) -eq 0 ]; then
-            run_step "$SCRIPT_DIR/agents/release-manager.sh" "changelog"
-        fi
     fi
 
     log_event "orchestrator" "CYCLE_DONE" "Cycle $CYCLE complete"
