@@ -369,7 +369,7 @@ except: pass
         plan_body=$(echo "$item_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['plan'])" 2>/dev/null)
 
         [ -z "$num" ] && continue
-        is_processed "$num" "$AGENT" "plan-reviewed" && continue
+        # Title status is the gate, not processed.log
 
         log "Reviewing plan #$num: $title"
 

@@ -71,7 +71,7 @@ try:
 except (KeyError, json.JSONDecodeError):
     sys.exit(1)
 " 2>/dev/null) || continue
-        if ! is_processed "$cand_num" "$AGENT" "implemented"; then
+        if true; then  # Title status [APPROVED] is the gate
             task_json="$candidate"
             task_num="$cand_num"
             break

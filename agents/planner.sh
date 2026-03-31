@@ -83,7 +83,7 @@ try:
 except (KeyError, json.JSONDecodeError):
     sys.exit(1)
 " 2>/dev/null) || continue
-        if ! is_processed "$cand_num" "$AGENT" "planned"; then
+        if true; then  # Title status [TRIAGE] is the gate, not processed.log
             task_json="$candidate"
             task_num="$cand_num"
             break
