@@ -157,7 +157,7 @@ run_cycle() {
     local has_triage has_planning has_approved has_review has_decisions
     has_triage=$(echo "$all_titles" | grep -cE "\[TRIAGE\]|\[FEATURE\]" 2>/dev/null || echo "0")
     has_planning=$(echo "$all_titles" | grep -c "\[PLANNING\]" 2>/dev/null || echo "0")
-    has_approved=$(echo "$all_titles" | grep -c "\[APPROVED\]" 2>/dev/null || echo "0")
+    has_approved=$(echo "$all_titles" | grep -cE "\[APPROVED\]|\[BUILDING\]" 2>/dev/null || echo "0")
     has_review=$(echo "$all_titles" | grep -c "\[REVIEW\]" 2>/dev/null || echo "0")
     has_decisions=$(echo "$all_titles" | grep -c "Decision needed" 2>/dev/null || echo "0")
     # Sanitize to integers

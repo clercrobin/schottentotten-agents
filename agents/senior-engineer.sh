@@ -47,7 +47,7 @@ import sys, json
 try:
     discussions = json.load(sys.stdin)
     for d in discussions:
-        if '[APPROVED]' in d.get('title', ''):
+        if '[APPROVED]' in d.get('title', '') or '[BUILDING]' in d.get('title', ''):
             print(json.dumps(d))
 except (json.JSONDecodeError, KeyError):
     pass
