@@ -152,26 +152,80 @@ run_check_decisions() {
     local qa_discussions
     qa_discussions=$(get_discussions "Q&A" 20 2>/dev/null || echo "[]")
 
-    echo "$qa_discussions" | python3 -c "
+    # Handle prod approval ("approve" reply to "Ready for prod" Q&A)
+    printf '%s' "$qa_discussions" | python3 -c "
+import sys, json, re
+raw = sys.stdin.read()
+raw = raw.translate({i: None for i in range(32) if i not in (9, 10, 13)})
+try:
+    for d in json.loads(raw):
+        if 'Ready for prod' not in d.get('title', ''):
+            continue
+        comments = d.get('last_comments', [])
+        human_replies = [c for c in comments if 'Agent' not in c[:20]]
+        for reply in human_replies:
+            if 'approve' in reply.lower():
+                print(f\"{d['number']}\tapprove\")
+                break
+except: pass
+" 2>/dev/null | while IFS=$'\t' read -r num action; do
+        [ -z "$num" ] && continue
+        is_processed "$num" "$AGENT" "prod-actioned" && continue
+
+        if [ "$action" = "approve" ]; then
+            log "🚀 Human approved prod release from Q&A #$num — merging staging → main"
+
+            local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
+            local staging_branch="${DEPLOY_BRANCH:-staging}"
+
+            cd "$TARGET_PROJECT"
+            git fetch origin 2>/dev/null || true
+            git checkout main 2>/dev/null || true
+            git pull origin main 2>/dev/null || true
+            git merge "origin/$staging_branch" --no-edit -m "release: merge staging to prod (approved in Q&A #$num)" 2>&1 | tail -5
+
+            if [ $? -eq 0 ] || git diff --quiet HEAD "origin/$staging_branch" 2>/dev/null; then
+                git push origin main 2>&1 | tail -3
+                reply_to_discussion "$num" "✅ **Shipped to prod.** Staging merged to main. CI deploying now." "$AGENT_PM" || true
+                log "✅ Merged staging → main"
+            else
+                # Conflict — ask engineer to resolve
+                git merge --abort 2>/dev/null || true
+                reply_to_discussion "$num" "⚠️ **Merge conflict.** Staging → main has conflicts. Creating fix task." "$AGENT_PM" || true
+                create_triage "Merge conflict: staging → main" \
+"**Priority:** critical
+Staging was approved for prod but has merge conflicts with main.
+Resolve conflicts and merge manually." "$AGENT_PM" || true
+                log "⚠️ Merge conflict — fix task created"
+            fi
+
+            git checkout "$staging_branch" 2>/dev/null || true
+            mark_processed "$num" "$AGENT" "prod-actioned"
+        fi
+    done
+
+    # Handle feature decisions ("Decision needed" Q&A)
+    printf '%s' "$qa_discussions" | python3 -c "
 import sys, json
-for d in json.load(sys.stdin):
-    if 'Decision needed' not in d.get('title', ''):
-        continue
-    comments = d.get('last_comments', [])
-    # Look for human replies (not from agents)
-    human_replies = [c for c in comments if 'Agent' not in c[:20]]
-    if human_replies:
-        title = d['title'].replace('\t', ' ')
-        last_reply = human_replies[-1][:500].replace('\t', ' ')
-        print(f\"{d['number']}\t{title}\t{last_reply}\")
+raw = sys.stdin.read()
+raw = raw.translate({i: None for i in range(32) if i not in (9, 10, 13)})
+try:
+    for d in json.loads(raw):
+        if 'Decision needed' not in d.get('title', ''):
+            continue
+        comments = d.get('last_comments', [])
+        human_replies = [c for c in comments if 'Agent' not in c[:20]]
+        if human_replies:
+            title = d['title'].replace('\t', ' ')
+            last_reply = human_replies[-1][:500].replace('\t', ' ')
+            print(f\"{d['number']}\t{title}\t{last_reply}\")
+except: pass
 " 2>/dev/null | while IFS=$'\t' read -r num title reply; do
         [ -z "$num" ] && continue
-
         is_processed "$num" "$AGENT" "decision-actioned" && continue
 
         log "📊 Human decision on #$num: $title"
 
-        # Convert the human decision into a triage item
         local decision_prompt
         decision_prompt=$(load_prompt "pm-decision") || continue
         decision_prompt=$(render_prompt "$decision_prompt" \
