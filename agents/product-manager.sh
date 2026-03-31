@@ -39,11 +39,18 @@ run_intake() {
     issue_count=$(echo "$issues" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
     log "  GitHub issues: $issue_count open"
 
-    # Source 2: Ideas discussions on agents repo (human posts feature ideas here)
-    local ideas
-    ideas=$(get_discussions "Ideas" 10 2>/dev/null || echo "[]")
-    local ideas_count
-    ideas_count=$(echo "$ideas" | python3 -c "import sys,json; print(len([d for d in json.load(sys.stdin) if 'Plan:' not in d.get('title','')]))" 2>/dev/null || echo "0")
+    # Source 2: Ideas discussions on agents repo (human posts feature ideas)
+    # NOTE: don't use get_discussions — it filters by env tag, but human Ideas don't have tags
+    local ideas ideas_count
+    ideas=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        discussions(first: 10, states: OPEN, orderBy: {field: CREATED_AT, direction: DESC}) {
+          nodes { number title body category { name } }
+        }
+      }
+    }' --jq '[.data.repository.discussions.nodes[] | select(.category.name == "Ideas") | select(.title | test("Plan:") | not)]' 2>/dev/null || echo "[]")
+    ideas_count=$(printf '%s' "$ideas" | python3 -c "import sys,json; print(len(json.loads(sys.stdin.read())))" 2>/dev/null || echo "0")
     log "  Ideas discussions: $ideas_count"
 
     if [ "$issue_count" = "0" ] && [ "$ideas_count" = "0" ]; then
@@ -70,12 +77,10 @@ for i in json.load(sys.stdin)[:5]:
     # Ideas discussions
     if [ "$ideas_count" != "0" ]; then
         local ideas_text
-        ideas_text=$(echo "$ideas" | python3 -c "
+        ideas_text=$(printf '%s' "$ideas" | python3 -c "
 import sys, json
-for d in json.load(sys.stdin):
-    if 'Plan:' in d.get('title', ''):
-        continue
-    body = d['body'][:300] if d.get('body') else '(no body)'
+for d in json.loads(sys.stdin.read()):
+    body = (d.get('body') or '')[:300]
     print(f\"### Idea #{d['number']}: {d['title']}\n{body}\n\")
 " 2>/dev/null)
         intake_context="$intake_context\n### Ideas Discussions\n$ideas_text"
