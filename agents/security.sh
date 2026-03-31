@@ -68,6 +68,21 @@ except (ValueError, json.JSONDecodeError):
         title=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'[SECURITY] {d[\"title\"]}')")
         body=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'**Priority:** {d[\"priority\"]}\n**Category:** security\n**Files:** {\", \".join(d.get(\"files\",[]))}\n\n{d[\"description\"]}\n\n**Remediation:** {d[\"remediation\"]}')")
 
+        # Dedup: check if already tracked
+        local title_lower
+        title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+        if get_discussions "$CAT_TRIAGE" 50 2>/dev/null | python3 -c "
+import sys, json
+title = '$title_lower'
+for d in json.load(sys.stdin):
+    if title in d.get('title','').lower():
+        sys.exit(0)
+sys.exit(1)
+" 2>/dev/null; then
+            log "⏭️  Already tracked: $title"
+            continue
+        fi
+
         post_discussion "$CAT_TRIAGE" "$title" "$body" "$AGENT_SECURITY" || continue
         log "📤 Posted: $title"
     done
@@ -262,7 +277,7 @@ except: print(0)
     fi
 
     if [ -n "$findings" ]; then
-        post_discussion "$CAT_TRIAGE" "[SECURITY] Audit findings — $(date '+%Y-%m-%d')" \
+        post_or_update "$CAT_TRIAGE" "[SECURITY] Audit findings" \
 "**Priority:** high
 **Category:** security
 

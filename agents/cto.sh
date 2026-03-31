@@ -88,6 +88,16 @@ for issue in issues[:5]:
     print(json.dumps({'title': title, 'body': body}))
 " > "$issues_file" 2>/dev/null
 
+    # Get existing open triage titles for dedup
+    local existing_titles
+    existing_titles=$(get_discussions "$CAT_TRIAGE" 50 2>/dev/null | python3 -c "
+import sys, json
+try:
+    for d in json.load(sys.stdin):
+        print(d.get('title', '').lower())
+except: pass
+" 2>/dev/null)
+
     local posted=0
     while IFS= read -r line; do
         [ -z "$line" ] && continue
@@ -95,6 +105,14 @@ for issue in issues[:5]:
         local title body
         title=$(echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])")
         body=$(echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])")
+
+        # Dedup: skip if a similar title already exists
+        local title_lower
+        title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+        if echo "$existing_titles" | grep -qF "$title_lower"; then
+            log "⏭️  Already tracked: $title"
+            continue
+        fi
 
         log "📤 Posting issue: $title"
         local disc_num

@@ -30,4 +30,6 @@ If any of these tools are missing or broken, flag as HIGH — agents cannot enfo
 For each issue, output a JSON array:
 [{"title": "...", "priority": "critical|high|medium|low", "category": "bug|security|performance|quality|architecture", "description": "...", "files": ["..."], "suggested_approach": "..."}]
 
-Output ONLY the JSON array. Max 5 issues. Prioritize issues with the highest compound value — one fix that prevents many future problems is worth more than five minor cleanups.
+CRITICAL: Before outputting, check the existing open Discussions in this repo to avoid duplicates. If an issue is already tracked (same file, same problem), do NOT include it again. Only report NEW issues not yet in Triage.
+
+Output ONLY the JSON array. Max 5 NEW issues. Output an empty array `[]` if all issues are already tracked. Prioritize issues with the highest compound value — one fix that prevents many future problems is worth more than five minor cleanups.
