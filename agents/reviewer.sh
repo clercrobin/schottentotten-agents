@@ -31,7 +31,9 @@ run_review() {
     local _tmpfile
     _tmpfile=$(mktemp)
     gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first: 20, states: OPEN) { nodes { number title } } } }' --jq '.data.repository.discussions.nodes' > "$_tmpfile" 2>/dev/null
+    log "  Query: owner=$GITHUB_OWNER repo=$GITHUB_REPO tmpfile=$(wc -c < "$_tmpfile" | tr -d ' ')b"
     unprocessed=$(python3 "$SCRIPT_DIR/../lib/find_review_items.py" < "$_tmpfile" 2>/dev/null)
+    log "  Found: ${#unprocessed} chars"
     rm -f "$_tmpfile"
     [ -z "$unprocessed" ] && { log "No PRs to review."; return 0; }
     # Wrap back into JSON array for the downstream parser

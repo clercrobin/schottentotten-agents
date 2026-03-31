@@ -99,7 +99,7 @@ run_step() {
     local start_time
     start_time=$(date +%s)
 
-    if bash "$agent_script" "$agent_mode" 2>&1 | tee -a "$LOG_DIR/$agent_name.log"; then
+    if PROJECT_NAME="$PROJECT_NAME" ENV_NAME="$ENV_NAME" bash "$agent_script" "$agent_mode" 2>&1 | tee -a "$LOG_DIR/$agent_name.log"; then
         local elapsed=$(( $(date +%s) - start_time ))
         log "✅ $agent_name/$agent_mode (${elapsed}s)"
         log_event "orchestrator" "STEP_OK" "$agent_name/$agent_mode in ${elapsed}s [session $CYCLE_SESSIONS]"
