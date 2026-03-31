@@ -48,7 +48,7 @@ _release_all_slots() {
         i=$((i + 1))
     done
 }
-trap 'RUNNING=false; log "🛑 Shutdown requested, finishing current step..."; _release_all_slots' INT TERM
+trap 'RUNNING=false; log "🛑 Shutdown — killing child processes..."; pkill -P $$ 2>/dev/null; pkill -f "claude -p" 2>/dev/null; _release_all_slots' INT TERM
 
 # ────────────────────────────────────────────
 # Resolve agent script — project override takes precedence
