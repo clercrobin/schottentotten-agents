@@ -157,7 +157,17 @@ run_cycle() {
     #   Skipped in focus mode — no new scanning, no new triage
     # ════════════════════════════════════════════
     if [ "$focus_mode" = "true" ]; then
-        log "⏭️  Discovery: focus mode — skipping scans and triage"
+        # Focus mode: still check for human input (Ideas + Q&A), skip scanning
+        local has_new_issues has_open_decisions
+        has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+        has_open_decisions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title category { name } } } } }' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Q&A")] | length' 2>/dev/null || echo "0")
+
+        if [ "$has_new_issues" -gt 0 ] || [ "$has_open_decisions" -gt 0 ]; then
+            run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
+            run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
+        else
+            log "⏭️  Discovery: focus mode — no human input, skipping scans"
+        fi
     else
         local has_new_issues has_open_decisions
         has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
