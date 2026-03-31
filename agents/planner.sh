@@ -28,12 +28,13 @@ log() { echo "[$(date '+%H:%M:%S')] [PLAN] $*"; }
 run_plan() {
     log "📋 Looking for issues to plan..."
 
-    local unprocessed
-    unprocessed=$(get_unprocessed "$CAT_TRIAGE" "$AGENT_PLANNER") || return 0
+    # Use get_discussions and filter by [TRIAGE] status in title
+    # (not get_unprocessed — agent replies shouldn't block re-planning)
+    local all_triage
+    all_triage=$(get_discussions "$CAT_TRIAGE" 20) || return 0
 
-    # Pick highest-priority unplanned issue
     local candidates
-    candidates=$(echo "$unprocessed" | python3 -c "
+    candidates=$(echo "$all_triage" | python3 -c "
 import sys, json, re
 priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 try:
