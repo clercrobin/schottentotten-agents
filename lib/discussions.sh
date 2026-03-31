@@ -83,7 +83,7 @@ import sys, json, os, re
 target = os.environ['MATCH_NAME']
 try:
     raw_text = sys.stdin.read()
-    raw_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw_text)
+    raw_text = raw_text.translate({i: None for i in range(32) if i not in (9, 10, 13)})
     data = json.loads(raw_text)
     cats = data['data']['repository']['discussionCategories']['nodes']
     for c in cats:
@@ -276,7 +276,7 @@ import sys, json, os, re
 env_tag = os.environ.get('ENV_TAG', 'prod')
 try:
     raw_text = sys.stdin.read()
-    raw_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw_text)
+    raw_text = raw_text.translate({i: None for i in range(32) if i not in (9, 10, 13)})
     data = json.loads(raw_text)
     discussions = data['data']['repository']['discussions']['nodes']
     # Filter by env tag
@@ -339,7 +339,7 @@ agent_label = os.environ['AGENT_LABEL']
 env_tag = os.environ['ENV_TAG']
 try:
     raw_text = sys.stdin.read()
-    raw_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw_text)
+    raw_text = raw_text.translate({i: None for i in range(32) if i not in (9, 10, 13)})
     data = json.loads(raw_text)
     discussions = data['data']['repository']['discussions']['nodes']
     filtered = []
