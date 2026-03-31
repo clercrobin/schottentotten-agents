@@ -7,6 +7,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
+source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
 
@@ -75,6 +76,11 @@ except (KeyError, json.JSONDecodeError):
     task_body=$(echo "$task_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])" 2>/dev/null) || task_body="(no body)"
 
     log "🎯 Picked up approved plan #$task_num: $task_title"
+
+    # Advance status to BUILDING
+    local topic
+    topic=$(extract_topic "$task_title" 2>/dev/null || echo "$task_title")
+    advance_status "$task_num" "BUILDING" "$topic" "🏗️ Starting implementation." "$AGENT_SENIOR_ENG" 2>/dev/null || true
 
     cd "$TARGET_PROJECT"
     # Use DEPLOY_BRANCH (staging) as base — PRs never target main directly
@@ -232,17 +238,16 @@ $result
     }
 
     # Post to Engineering + Code Review channels
-    post_discussion "$CAT_ENGINEERING" "🏗️ $task_title" \
-"**Task:** #$task_num | **Branch:** \`$branch_name\` | **PR:** $pr_url
+    # Advance to REVIEW status on the original triage discussion
+    advance_status "$task_num" "REVIEW" "$topic" \
+"🏗️ **Implementation complete.**
 
-$result" "$AGENT_SENIOR_ENG" || true
-
-    post_discussion "$CAT_CODE_REVIEW" "🔍 Review: $task_title" \
-"**PR:** $pr_url | **Branch:** \`$branch_name\` | **Task:** #$task_num
+**Branch:** \`$branch_name\`
+**PR:** $pr_url
 
 $result
 
-*Please review.*" "$AGENT_SENIOR_ENG" || true
+*Awaiting code review + security review.*" "$AGENT_SENIOR_ENG" 2>/dev/null || true
 
     mark_processed "$task_num" "$AGENT" "implemented"
     log "✅ Implemented #$task_num → PR: $pr_url"

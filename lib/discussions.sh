@@ -361,6 +361,61 @@ tag_discussion() {
 }
 
 # ────────────────────────────────────────────
+# Update a discussion's title (for lifecycle status tracking)
+# Usage: update_discussion_title <discussion_number> "New Title"
+# ────────────────────────────────────────────
+update_discussion_title() {
+    local discussion_number="$1"
+    local new_title="$2"
+
+    local disc_id
+    disc_id=$(gh api graphql \
+        -F owner="$GITHUB_OWNER" \
+        -F repo="$GITHUB_REPO" \
+        -F num="$discussion_number" \
+        -f query='
+        query($owner: String!, $repo: String!) {
+          repository(owner: $owner, name: $repo) {
+            discussion(number: $num) { id }
+          }
+        }' --jq '.data.repository.discussion.id' 2>/dev/null) || return 1
+
+    [ -z "$disc_id" ] || [ "$disc_id" = "null" ] && return 1
+
+    gh api graphql \
+        -F id="$disc_id" \
+        -F title="$new_title" \
+        -f query='
+        mutation($id: ID!, $title: String!) {
+          updateDiscussion(input: {
+            discussionId: $id
+            title: $title
+          }) {
+            discussion { title }
+          }
+        }' &>/dev/null || return 1
+}
+
+# ────────────────────────────────────────────
+# Update lifecycle status in a discussion title
+# Replaces [STATUS] prefix while keeping the topic
+# Usage: update_status <discussion_number> "NEW_STATUS" "topic title"
+#
+# Example: update_status 42 "REVIEW" "applyMove exception"
+# Result:  "[staging] [REVIEW] applyMove exception"
+# ────────────────────────────────────────────
+update_status() {
+    local discussion_number="$1"
+    local new_status="$2"
+    local topic="$3"
+
+    local env_tag="${ENV_NAME:-prod}"
+    local new_title="[$env_tag] [$new_status] $topic"
+
+    update_discussion_title "$discussion_number" "$new_title"
+}
+
+# ────────────────────────────────────────────
 # Post or update a "pinned" discussion — reuses an existing
 # discussion with the same title prefix instead of creating a new one.
 # Use for recurring reports (quality gate, security, staging status).

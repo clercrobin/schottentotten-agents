@@ -8,6 +8,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
+source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
 
@@ -97,7 +98,7 @@ for issue in issues[:5]:
 
         log "📤 Posting issue: $title"
         local disc_num
-        disc_num=$(post_discussion "$CAT_TRIAGE" "$title" "$body" "$AGENT_CTO") || {
+        disc_num=$(create_triage "$title" "$body" "$AGENT_CTO") || {
             log "⚠️  Failed to post discussion for: $title"
             continue
         }
@@ -305,16 +306,19 @@ run_standup() {
 run_approve_plans() {
     log "📋 Reviewing plans for approval..."
 
-    local unprocessed
-    unprocessed=$(get_unprocessed "$CAT_PLANNING" "$AGENT_CTO") || return 0
+    # Find triage discussions in [PLANNING] status
+    local discussions
+    discussions=$(get_discussions "$CAT_TRIAGE" 20) || return 0
 
-    echo "$unprocessed" | python3 -c "
+    echo "$discussions" | python3 -c "
 import sys, json
 for d in json.load(sys.stdin):
-    title = d['title'].replace('\t', ' ')
-    body = d['body'][:3000].replace('\t', ' ')
-    print(f\"{d['number']}\t{title}\t{body}\")
-" 2>/dev/null | while IFS=$'\t' read -r num title body; do
+    if '[PLANNING]' in d.get('title', ''):
+        title = d['title'].replace('\t', ' ')
+        # Get the plan from the last comments
+        plan = '\n'.join(d.get('last_comments', [])[-2:])[:3000].replace('\t', ' ')
+        print(f\"{d['number']}\t{title}\t{plan}\")
+" 2>/dev/null | while IFS=$'\t' read -r num title plan_body; do
         [ -z "$num" ] && continue
 
         is_processed "$num" "$AGENT" "plan-reviewed" && continue
@@ -326,22 +330,26 @@ for d in json.load(sys.stdin):
         approve_prompt=$(render_prompt "$approve_prompt" \
             DISC_NUM "$num" \
             TITLE "$title" \
-            BODY "$body")
+            BODY "$plan_body")
 
         local response
         response=$(safe_claude "$AGENT" "$approve_prompt" \
         --allowedTools "Read,Glob,Grep") || continue
 
-        reply_to_discussion "$num" "$response" "$AGENT_CTO" || continue
-        mark_processed "$num" "$AGENT" "plan-reviewed"
+        local topic
+        topic=$(extract_topic "$title")
 
         if echo "$response" | grep -qi "APPROVED"; then
-            tag_discussion "$num" "plan-approved" || true
+            advance_status "$num" "APPROVED" "$topic" "$response" "$AGENT_CTO"
             log "✅ Plan #$num approved"
         else
-            tag_discussion "$num" "plan-needs-work" || true
-            log "🔄 Plan #$num needs work"
+            advance_status "$num" "TRIAGE" "$topic" "**Plan needs work.**
+
+$response" "$AGENT_CTO"
+            log "🔄 Plan #$num needs work — back to triage"
         fi
+
+        mark_processed "$num" "$AGENT" "plan-reviewed"
     done
 }
 

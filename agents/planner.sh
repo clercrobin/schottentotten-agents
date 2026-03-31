@@ -13,6 +13,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
+source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
 
@@ -97,26 +98,19 @@ except (KeyError, json.JSONDecodeError):
         return 1
     }
 
-    # Post the plan to the Planning category
-    local plan_disc_num
-    plan_disc_num=$(post_discussion "$CAT_PLANNING" "📋 Plan: $task_title" \
-"**Source:** Triage #$task_num
+    # Update the triage discussion — reply with plan + advance status
+    local topic
+    topic=$(extract_topic "$task_title")
+    advance_status "$task_num" "PLANNING" "$topic" \
+"## Implementation Plan
 
 $plan_result
 
 ---
-*Awaiting CTO approval before implementation begins.*" "$AGENT_PLANNER") || {
-        log "⚠️  Failed to post plan"
-        return 1
-    }
-
-    # Link the plan back to the triage issue
-    reply_to_discussion "$task_num" "📋 **Plan created:** Discussion #$plan_disc_num
-
-Implementation plan is ready for review. Waiting for CTO approval before proceeding." "$AGENT_PLANNER" || true
+*Awaiting CTO approval before implementation begins.*" "$AGENT_PLANNER" || true
 
     mark_processed "$task_num" "$AGENT" "planned"
-    log "✅ Plan created for #$task_num → Plan #$plan_disc_num"
+    log "✅ Plan added to #$task_num"
 }
 
 case "$MODE" in
