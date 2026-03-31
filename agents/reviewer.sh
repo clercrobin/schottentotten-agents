@@ -30,7 +30,7 @@ run_review() {
     # Look for [REVIEW] items across ALL open discussions (any category)
     local _tmpfile
     _tmpfile=$(mktemp)
-    gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first: 20, states: OPEN) { nodes { number title body } } } }' --jq '.data.repository.discussions.nodes' > "$_tmpfile" 2>/dev/null
+    gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first: 20, states: OPEN) { nodes { number title } } } }' --jq '.data.repository.discussions.nodes' > "$_tmpfile" 2>/dev/null
     unprocessed=$(python3 "$SCRIPT_DIR/../lib/find_review_items.py" < "$_tmpfile" 2>/dev/null)
     rm -f "$_tmpfile"
     [ -z "$unprocessed" ] && { log "No PRs to review."; return 0; }
