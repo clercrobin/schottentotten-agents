@@ -27,8 +27,8 @@ run_review() {
     log "🔎 Looking for PRs to review..."
 
     local unprocessed
-    # Look for [REVIEW] items in Triage (lifecycle model)
-    unprocessed=$(get_discussions "$CAT_TRIAGE" 20 2>/dev/null | python3 -c "
+    # Look for [REVIEW] items across ALL open discussions (any category)
+    unprocessed=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first: 20, states: OPEN) { nodes { number title body comments(first:3) { nodes { body } } } } } }' --jq '.data.repository.discussions.nodes' 2>/dev/null | python3 -c "
 import sys, json
 try:
     for d in json.load(sys.stdin):
