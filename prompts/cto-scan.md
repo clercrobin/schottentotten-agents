@@ -32,4 +32,4 @@ For each issue, output a JSON array:
 
 CRITICAL: Before outputting, check the existing open Discussions in this repo to avoid duplicates. If an issue is already tracked (same file, same problem), do NOT include it again. Only report NEW issues not yet in Triage.
 
-Output ONLY the JSON array. Max 5 NEW issues. Output an empty array `[]` if all issues are already tracked. Prioritize issues with the highest compound value — one fix that prevents many future problems is worth more than five minor cleanups.
+Output ONLY the JSON array. **Max 1 issue** — the single most important NEW issue. Output an empty array `[]` if all issues are already tracked. Focus on the highest compound value — one fix that prevents many future problems.

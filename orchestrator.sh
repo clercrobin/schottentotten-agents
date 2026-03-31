@@ -163,10 +163,17 @@ run_cycle() {
     run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
     run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
 
-    # Scans — only in normal mode
+    # Scans — only in normal mode, and only when there's no work in progress
+    # This prevents flooding triage when there are already items being worked on
     if [ "$focus_mode" != "true" ] && [ $((CYCLE % 5)) -eq 1 ]; then
-        run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
-        run_step "$SCRIPT_DIR/agents/security.sh" "scan"
+        local open_triage
+        open_triage=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:1, states:OPEN) { totalCount } } }' --jq '.data.repository.discussions.totalCount' 2>/dev/null || echo "0")
+        if [ "$open_triage" -le 2 ]; then
+            run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
+            run_step "$SCRIPT_DIR/agents/security.sh" "scan"
+        else
+            log "⏭️  Scans: $open_triage items already open — finish those first"
+        fi
     fi
 
     # ════════════════════════════════════════════
@@ -204,19 +211,22 @@ run_cycle() {
     run_step "$SCRIPT_DIR/agents/quality-gate.sh" "check"
 
     # ════════════════════════════════════════════
-    # PHASE 6: LEARN + AUDITS (only in normal mode)
+    # PHASE 6: LEARN (both modes — compounds knowledge after merges)
+    # ════════════════════════════════════════════
+    local has_merged_work
+    has_merged_work=$(gh pr list --repo "$target_repo" --state merged --base "$staging_branch" --json mergedAt --jq "[.[] | select(.mergedAt > \"$(date -u -v-1H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '2000-01-01')\")]| length" 2>/dev/null || echo "0")
+    if [ "$has_merged_work" -gt 0 ]; then
+        run_step "$SCRIPT_DIR/agents/compound.sh" "extract"
+    fi
+
+    if [ $((CYCLE % 5)) -eq 0 ]; then
+        run_step "$SCRIPT_DIR/agents/self-improve.sh" "learn"
+    fi
+
+    # ════════════════════════════════════════════
+    # PERIODIC AUDITS (normal mode only — creates new triage items)
     # ════════════════════════════════════════════
     if [ "$focus_mode" != "true" ]; then
-        local has_merged_work
-        has_merged_work=$(gh pr list --repo "$target_repo" --state merged --base "$staging_branch" --json mergedAt --jq "[.[] | select(.mergedAt > \"$(date -u -v-1H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '2000-01-01')\")]| length" 2>/dev/null || echo "0")
-        if [ "$has_merged_work" -gt 0 ]; then
-            run_step "$SCRIPT_DIR/agents/compound.sh" "extract"
-        fi
-
-        if [ $((CYCLE % 5)) -eq 0 ]; then
-            run_step "$SCRIPT_DIR/agents/self-improve.sh" "learn"
-        fi
-
         case $((CYCLE % 10)) in
             1) run_step "$SCRIPT_DIR/agents/security.sh" "audit" ;;
             3) run_step "$SCRIPT_DIR/agents/docs-writer.sh" "audit" ;;

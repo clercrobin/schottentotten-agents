@@ -29,4 +29,4 @@ JSON array:
 
 CRITICAL: Before outputting, check existing open Triage discussions to avoid duplicates. If a finding is already tracked, do NOT include it. Only report NEW findings.
 
-ONLY the JSON array. Max 5 NEW findings. Output an empty array `[]` if all findings are already tracked. Zero false positives — only flag code you're confident is vulnerable.
+ONLY the JSON array. **Max 1 finding** — the single most critical NEW finding. Output an empty array `[]` if all findings are already tracked. Zero false positives.
