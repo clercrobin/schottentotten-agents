@@ -122,69 +122,31 @@ $result" "$AGENT_DEVOPS" || true
 # ────────────────────────────────────────────
 run_staging() {
     local target_branch="${DEPLOY_BRANCH:-staging}"
-    # Only run staging rebuild for non-prod environments
     if [ "$target_branch" = "main" ]; then
         log "🧪 Skipping staging rebuild (env=${ENV_NAME:-prod} deploys from main)"
         return 0
     fi
-    log "🧪 Rebuilding $target_branch branch [env=${ENV_NAME:-staging}]..."
+
+    # Staging is managed via GitHub PRs targeting the staging branch.
+    # This agent does NOT rebuild staging from scratch every cycle.
+    # It only logs the current state. Full rebuilds are manual operations.
+    log "🧪 Staging status check [env=${ENV_NAME:-staging}]..."
 
     cd "$TARGET_PROJECT"
+    git fetch origin 2>/dev/null || true
 
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
-
-    # Get all open PR branches
-    local pr_branches
-    pr_branches=$(gh pr list --repo "$target_repo" --state open --json headRefName --jq '.[].headRefName' 2>/dev/null)
-
-    if [ -z "$pr_branches" ]; then
-        log "  No open PRs to stage"
-        return 0
-    fi
-
-    local pr_count
-    pr_count=$(echo "$pr_branches" | wc -l | tr -d ' ')
-    log "  Found $pr_count open PRs"
-
-    git fetch origin --prune 2>/dev/null || true
+    local open_prs
+    open_prs=$(gh pr list --repo "$target_repo" --state open --base "$target_branch" --json number --jq 'length' 2>/dev/null || echo "0")
+    log "  Open PRs targeting $target_branch: $open_prs"
 
     local base_branch
     base_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || echo "main")
-
-    # Stash any local changes
-    git stash push -m "devops-staging-$(date +%s)" 2>/dev/null || true
-
-    # Reset target branch to main
-    git checkout "$base_branch" 2>/dev/null || true
-    git pull origin "$base_branch" --ff-only 2>/dev/null || true
-    git branch -D "$target_branch" 2>/dev/null || true
-    git checkout -b "$target_branch" "$base_branch"
-
-    local merged=0
-    local failed=0
-    local conflict_branches=""
-
-    while IFS= read -r branch; do
-        [ -z "$branch" ] && continue
-        if git merge "origin/$branch" --no-edit -m "staging: merge $branch" 2>/dev/null; then
-            merged=$((merged + 1))
-        else
-            git merge --abort 2>/dev/null || true
-            failed=$((failed + 1))
-            conflict_branches="$conflict_branches\n- \`$branch\`"
-        fi
-    done <<< "$pr_branches"
-
-    log "  Merged: $merged, Conflicts: $failed"
-
-    # Push target branch
-    git push origin "$target_branch" --force 2>/dev/null || {
-        log "⚠️  Failed to push $target_branch"
-        git checkout "$base_branch" 2>/dev/null || true
-        return 1
-    }
-
-    git checkout "$base_branch" 2>/dev/null || true
+    local behind
+    behind=$(git rev-list --count "origin/$target_branch..origin/$base_branch" 2>/dev/null || echo "?")
+    local ahead
+    ahead=$(git rev-list --count "origin/$base_branch..origin/$target_branch" 2>/dev/null || echo "?")
+    log "  Staging vs main: +$ahead ahead, -$behind behind"
 
     # Post summary
     local summary="## Staging Branch Rebuilt
