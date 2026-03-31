@@ -19,30 +19,29 @@ log() { echo "[$(date '+%H:%M:%S')] [ENG] $*"; }
 # work — Pick up a task from Triage and implement it
 # ────────────────────────────────────────────
 run_work() {
-    log "👷 Looking for tasks..."
+    log "👷 Looking for approved plans..."
 
-    local unprocessed
-    unprocessed=$(get_unprocessed "$CAT_TRIAGE" "$AGENT_SENIOR_ENG") || return 0
+    # Pick up CTO-approved plans from the Planning category
+    local plans
+    plans=$(get_discussions "$CAT_PLANNING" 20) || return 0
 
-    # Flatten JSON array to one-JSON-per-line, sorted by priority (highest first)
+    # Find plans that have been approved by CTO but not yet implemented
     local candidates
-    candidates=$(echo "$unprocessed" | python3 -c "
-import sys, json, re
-priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
+    candidates=$(echo "$plans" | python3 -c "
+import sys, json
 try:
     discussions = json.load(sys.stdin)
-    def get_priority(d):
-        m = re.search(r'\[(CRITICAL|HIGH|MEDIUM|LOW)\]', d.get('title', ''), re.IGNORECASE)
-        return priority_order.get(m.group(1).lower(), 9) if m else 9
-    discussions.sort(key=get_priority)
     for d in discussions:
-        print(json.dumps(d))
+        comments = ' '.join(d.get('last_comments', []))
+        has_approval = 'plan-approved' in comments.lower() or ('approved' in comments.upper() and 'Agent CTO' in comments)
+        if has_approval:
+            print(json.dumps(d))
 except (json.JSONDecodeError, KeyError):
     pass
 " 2>/dev/null)
 
     if [ -z "$candidates" ]; then
-        log "No new tasks."
+        log "No approved plans to implement."
         return 0
     fi
 
@@ -67,7 +66,7 @@ except (KeyError, json.JSONDecodeError):
     done <<< "$candidates"
 
     if [ -z "$task_num" ]; then
-        log "No new tasks."
+        log "No new approved plans."
         return 0
     fi
 
@@ -75,7 +74,7 @@ except (KeyError, json.JSONDecodeError):
     task_title=$(echo "$task_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])" 2>/dev/null) || { log "Cannot parse task title"; return 1; }
     task_body=$(echo "$task_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])" 2>/dev/null) || task_body="(no body)"
 
-    log "🎯 Picked up #$task_num: $task_title"
+    log "🎯 Picked up approved plan #$task_num: $task_title"
 
     cd "$TARGET_PROJECT"
     local base_branch

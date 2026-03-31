@@ -22,7 +22,7 @@ echo "1/4 — Creating GitHub repository..."
 if gh repo view "$GITHUB_REPO_FULL" &>/dev/null; then
     echo "   ✅ Repo already exists: $GITHUB_REPO_FULL"
 else
-    gh repo create "$GITHUB_REPO" --public --description "AI Agent Factory — Multi-agent dev pipeline powered by Claude Code" --clone=false
+    gh repo create "$GITHUB_REPO" --private --description "AI Agent Factory — Multi-agent dev pipeline powered by Claude Code" --clone=false
     echo "   ✅ Created repo: $GITHUB_REPO_FULL"
 fi
 
@@ -44,7 +44,7 @@ echo "3/4 — Checking Discussion categories..."
 
 # GitHub API does NOT support creating Discussion categories.
 # They must be created via the web UI. Query what exists and report.
-REQUIRED_CATS=("Triage" "Engineering" "Code Review" "Daily Standup" "Incidents")
+REQUIRED_CATS=("Triage" "Planning" "Engineering" "Code Review" "Daily Standup" "Incidents")
 
 existing_cats=$(gh api graphql -f query='
 query($owner: String!, $name: String!) {
@@ -139,16 +139,21 @@ if [ -n "$welcome_cat_id" ]; then
     }' -f repoId="$REPO_ID" \
        -f catId="$welcome_cat_id" \
        -f title="🏭 Agent Factory Online" \
-       -f body="The AI Agent Factory is now operational.
+       -f body="The AI Agent Factory is now operational, following the **Compound Engineering** methodology.
+
+**Cycle: Plan → Work → Review → Compound**
 
 **Active Agents:**
-- 🎯 CTO Agent — triages issues, assigns work, decides deploys
-- 👷 Senior Engineer Agent — implements features, fixes bugs, writes tests
-- 🔎 Code Reviewer Agent — reviews PRs, checks quality
+- 🎯 CTO Agent — scans codebase, triages issues, approves plans, merges PRs
+- 🔬 Researcher Agent — deep-dives into codebase patterns, existing solutions, and best practices
+- 📋 Planner Agent — creates detailed implementation plans from research findings
+- 👷 Senior Engineer Agent — executes approved plans, responds to review feedback
+- 🔎 Code Reviewer Agent — 7 specialist reviews (security, performance, architecture, data integrity, code simplicity, deployment, agent-native)
+- 🔄 Compound Agent — extracts learnings, writes solution docs, suggests CLAUDE.md updates
 
 **Target Project:** \`$TARGET_PROJECT\`
 
-All agents communicate here via Discussions. The orchestrator polls every ${POLL_INTERVAL} seconds." \
+All agents communicate here via Discussions. Each cycle compounds knowledge." \
     && echo "   ✅ Welcome message posted" || echo "   ⚠️  Could not post welcome message"
 else
     echo "   ⚠️  No valid category found for welcome message. Create categories first."

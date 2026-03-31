@@ -76,6 +76,20 @@ if [ -n "$PROJECT_NAME" ]; then
 fi
 
 # ────────────────────────────────────────────
+# 3.5 Load environment overlay (if ENV_NAME is set)
+# ────────────────────────────────────────────
+export ENV_NAME="${ENV_NAME:-}"
+
+if [ -n "$ENV_NAME" ] && [ -n "$PROJECT_DIR" ] && [ -d "$PROJECT_DIR" ]; then
+    _ENV_FILE="$PROJECT_DIR/envs/${ENV_NAME}.sh"
+    if [ -f "$_ENV_FILE" ]; then
+        source "$_ENV_FILE"
+    elif [ "$ENV_NAME" != "prod" ]; then
+        echo "[config-loader] WARNING: env '$ENV_NAME' not found at $_ENV_FILE" >&2
+    fi
+fi
+
+# ────────────────────────────────────────────
 # 4. Set project-specific paths (after overrides loaded)
 # ────────────────────────────────────────────
 if [ -n "$PROJECT_NAME" ] && [ -d "$PROJECT_DIR" ]; then
@@ -125,6 +139,46 @@ parse_project_flag() {
 
     if [ -n "$project" ]; then
         echo "PROJECT_NAME='$project'; set -- ${new_args[*]:+"${new_args[*]}"}; source \"\$BASE_DIR/config-loader.sh\" \"\$PROJECT_NAME\""
+    else
+        echo "set -- ${new_args[*]:+"${new_args[*]}"}"
+    fi
+}
+
+# ────────────────────────────────────────────
+# Helper: parse --env flag from script args
+# Strips --env <name> from the argument list
+# Usage: eval "$(parse_env_flag "$@")"
+#   This sets ENV_NAME and re-sources config-loader
+# Must be called AFTER parse_project_flag
+# ────────────────────────────────────────────
+parse_env_flag() {
+    local new_args=()
+    local env_val=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --env)
+                if [ -n "${2:-}" ]; then
+                    env_val="$2"
+                    shift 2
+                else
+                    echo "echo 'ERROR: --env requires a name' >&2; exit 1"
+                    return
+                fi
+                ;;
+            --env=*)
+                env_val="${1#--env=}"
+                shift
+                ;;
+            *)
+                new_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [ -n "$env_val" ]; then
+        echo "ENV_NAME='$env_val'; set -- ${new_args[*]:+"${new_args[*]}"}; source \"\$BASE_DIR/config-loader.sh\" \"\$PROJECT_NAME\""
     else
         echo "set -- ${new_args[*]:+"${new_args[*]}"}"
     fi

@@ -16,8 +16,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/config-loader.sh"
 
-# Parse --project flag from args
+# Parse --project and --env flags from args
 eval "$(parse_project_flag "$@")"
+eval "$(parse_env_flag "$@")"
 
 source "$SCRIPT_DIR/lib/discussions.sh"
 

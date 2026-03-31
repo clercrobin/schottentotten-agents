@@ -124,12 +124,16 @@ post_discussion() {
     local body="$3"
     local agent_label="${4:-system}"
 
+    # Env-tag: prefix title so discussions are filterable by environment
+    local env_tag="${ENV_NAME:-prod}"
+    title="[$env_tag] $title"
+
     local repo_id cat_id
     repo_id=$(_repo_id) || { echo "ERROR: cannot get repo ID" >&2; return 1; }
     cat_id=$(_resolve_category_id "$category_name") || return 1
 
     local signed_body
-    signed_body="**[$agent_label]** — $(date -u '+%Y-%m-%d %H:%M UTC')
+    signed_body="**[$agent_label]** · \`$env_tag\` — $(date -u '+%Y-%m-%d %H:%M UTC')
 
 $body"
 
@@ -194,7 +198,8 @@ reply_to_discussion() {
         return 1
     fi
 
-    local signed_body="**[$agent_label]** — $(date -u '+%Y-%m-%d %H:%M UTC')
+    local env_tag="${ENV_NAME:-prod}"
+    local signed_body="**[$agent_label]** · \`$env_tag\` — $(date -u '+%Y-%m-%d %H:%M UTC')
 
 $body"
 
@@ -257,11 +262,16 @@ get_discussions() {
 
     _check_graphql_response "$raw" || { echo "[]"; return 1; }
 
-    echo "$raw" | python3 -c "
-import sys, json
+    local env_tag="${ENV_NAME:-prod}"
+
+    echo "$raw" | ENV_TAG="$env_tag" python3 -c "
+import sys, json, os
+env_tag = os.environ.get('ENV_TAG', 'prod')
 try:
     data = json.load(sys.stdin)
     discussions = data['data']['repository']['discussions']['nodes']
+    # Filter by env tag
+    discussions = [d for d in discussions if d.get('title', '').startswith(f'[{env_tag}]')]
     for d in discussions:
         d['comment_count'] = len(d['comments']['nodes'])
         d['last_comments'] = [c['body'] for c in d['comments']['nodes']]
@@ -309,14 +319,21 @@ get_unprocessed() {
 
     _check_graphql_response "$raw" || { echo "[]"; return 1; }
 
-    echo "$raw" | AGENT_LABEL="$agent_label" python3 -c "
+    local env_tag="${ENV_NAME:-prod}"
+
+    echo "$raw" | AGENT_LABEL="$agent_label" ENV_TAG="$env_tag" python3 -c "
 import sys, json, os
 agent_label = os.environ['AGENT_LABEL']
+env_tag = os.environ['ENV_TAG']
 try:
     data = json.load(sys.stdin)
     discussions = data['data']['repository']['discussions']['nodes']
     filtered = []
     for d in discussions:
+        # Filter by env tag — only process discussions for this environment
+        title = d.get('title', '')
+        if not title.startswith(f'[{env_tag}]'):
+            continue
         agent_replied = any(f'[{agent_label}]' in c['body'] for c in d['comments']['nodes'])
         if not agent_replied:
             filtered.append({

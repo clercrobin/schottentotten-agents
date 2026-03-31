@@ -17,15 +17,62 @@ load_prompt() {
     local base_dir="${BASE_DIR:-$(cd "$_ROBUST_LIB_DIR/.." && pwd)}"
     local project_prompt="${PROJECT_DIR:+$PROJECT_DIR/prompts/${name}.md}"
     local base_prompt="$base_dir/prompts/${name}.md"
+    local content=""
 
     if [ -n "$project_prompt" ] && [ -f "$project_prompt" ]; then
-        cat "$project_prompt"
+        content=$(cat "$project_prompt")
     elif [ -f "$base_prompt" ]; then
-        cat "$base_prompt"
+        content=$(cat "$base_prompt")
     else
         echo "ERROR: prompt template '$name' not found" >&2
         return 1
     fi
+
+    # Auto-inject project-specific rules and style (self-improvement output)
+    if [ -n "${PROJECT_DIR:-}" ]; then
+        local rules_file="$PROJECT_DIR/rules.md"
+        local style_file="$PROJECT_DIR/style.md"
+
+        local project_context=""
+        if [ -f "$rules_file" ]; then
+            project_context="$project_context
+
+## Project Rules (auto-learned — MUST follow)
+$(cat "$rules_file")"
+        fi
+        if [ -f "$style_file" ]; then
+            project_context="$project_context
+
+## Project Style (auto-learned — follow conventions)
+$(cat "$style_file")"
+        fi
+
+        if [ -n "$project_context" ]; then
+            content="$content
+---
+$project_context"
+        fi
+    fi
+
+    # Auto-inject environment context when ENV_NAME is set
+    if [ -n "${ENV_NAME:-}" ]; then
+        local env_context_file="$base_dir/prompts/env-context.md"
+        if [ -f "$env_context_file" ]; then
+            content="$content
+
+---
+$(cat "$env_context_file")
+
+**Current environment:** ${ENV_NAME}
+**Deploy branch:** ${DEPLOY_BRANCH:-main}
+**Deploy URL:** ${DEPLOY_URL:-N/A}
+**TF directory:** ${TF_DIR:-infra/terraform}
+**S3 bucket:** ${S3_BUCKET:-N/A}
+**IAM role:** ${IAM_ROLE_ARN:-N/A}"
+        fi
+    fi
+
+    echo "$content"
 }
 
 # ────────────────────────────────────────────

@@ -17,13 +17,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/config-loader.sh"
 
-# Parse --project flag from args
+# Parse --project and --env flags from args
 eval "$(parse_project_flag "$@")"
+eval "$(parse_env_flag "$@")"
 
 source "$SCRIPT_DIR/lib/state.sh"
 
-# Include project name in tmux session for isolation
-SESSION_NAME="agent-factory${PROJECT_NAME:+-$PROJECT_NAME}"
+# Include project + env in tmux session for isolation
+SESSION_NAME="agent-factory${PROJECT_NAME:+-$PROJECT_NAME}${ENV_NAME:+-$ENV_NAME}"
 
 # ────────────────────────────────────────────
 # START
@@ -36,6 +37,8 @@ do_start() {
 
     echo "🏭 Starting Agent Factory..."
     echo "   Project: $TARGET_PROJECT"
+    echo "   Env:     ${ENV_NAME:-prod}"
+    echo "   Branch:  ${DEPLOY_BRANCH:-main}"
     echo "   Repo:    $GITHUB_REPO_FULL"
     echo "   Forum:   https://github.com/$GITHUB_REPO_FULL/discussions"
 
@@ -63,13 +66,16 @@ do_start() {
     tmux set-option -t "$SESSION_NAME" status-right "#[fg=colour166] %H:%M:%S "
     tmux set-option -t "$SESSION_NAME" status-interval 5
 
-    # Pane 0: orchestrator (pass --project if set)
-    local project_flag=""
+    # Pane 0: orchestrator (pass --project and --env if set)
+    local flags=""
     if [ -n "${PROJECT_NAME:-}" ]; then
-        project_flag="--project $PROJECT_NAME"
+        flags="--project $PROJECT_NAME"
+    fi
+    if [ -n "${ENV_NAME:-}" ]; then
+        flags="$flags --env $ENV_NAME"
     fi
     tmux send-keys -t "$SESSION_NAME:factory.0" \
-        "cd '$SCRIPT_DIR' && ./orchestrator.sh $project_flag 2>&1 | tee -a '$LOG_DIR/orchestrator.log'" Enter
+        "cd '$SCRIPT_DIR' && ./orchestrator.sh $flags 2>&1 | tee -a '$LOG_DIR/orchestrator.log'" Enter
 
     # Pane 1: control shell
     tmux send-keys -t "$SESSION_NAME:factory.1" \
@@ -196,7 +202,7 @@ do_status() {
 # ────────────────────────────────────────────
 do_logs() {
     mkdir -p "$LOG_DIR"
-    for f in orchestrator cto senior-engineer reviewer; do
+    for f in orchestrator product-manager cto planner senior-engineer test-runner reviewer security compound self-improve devops sre quality-gate docs-writer dependency-auditor accessibility-auditor qa-writer release-manager; do
         touch "$LOG_DIR/$f.log"
     done
     tail -f "$LOG_DIR"/*.log

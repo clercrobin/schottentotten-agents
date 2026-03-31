@@ -1,6 +1,13 @@
 #!/bin/bash
 # ============================================================
-# 🔎 Code Reviewer Agent — robust version (bash 3.2 compatible)
+# 🔎 Code Reviewer Agent — Single comprehensive review
+#
+# ONE Claude session covering all 7 domains:
+# security, performance, architecture, data integrity,
+# code quality, deployment safety, test coverage.
+#
+# Previous design: 7 specialist sessions + 1 synthesis = 8 sessions
+# Current design: 1 comprehensive session = 1 session (8x faster)
 # ============================================================
 set -uo pipefail
 
@@ -21,7 +28,6 @@ run_review() {
     local unprocessed
     unprocessed=$(get_unprocessed "$CAT_CODE_REVIEW" "$AGENT_REVIEWER") || return 0
 
-    # Tab-separated output from Python — safe delimiter
     echo "$unprocessed" | python3 -c "
 import sys, json
 for d in json.load(sys.stdin):
@@ -35,7 +41,7 @@ for d in json.load(sys.stdin):
 
         log "Reviewing #$num: $title"
 
-        # Extract branch name and PR number (BSD-compatible sed)
+        # Get diff
         local branch_name diff_content=""
         branch_name=$(echo "$body" | sed -n 's/.*Branch:[[:space:]]*`\([^`]*\)`.*/\1/p' | head -1)
 
@@ -53,11 +59,11 @@ for d in json.load(sys.stdin):
             diff_content=$(gh pr diff "$pr_number" --repo "$GITHUB_REPO_FULL" 2>/dev/null || echo "$diff_content")
         fi
 
-        # Truncate diff to avoid token explosion
-        diff_content="${diff_content:0:8000}"
+        diff_content="${diff_content:0:12000}"
 
+        # ONE comprehensive review — all 7 domains in a single session
         local review_prompt
-        review_prompt=$(load_prompt "reviewer-review") || continue
+        review_prompt=$(load_prompt "reviewer-comprehensive") || continue
         review_prompt=$(render_prompt "$review_prompt" \
             TITLE "$title" \
             BODY "$body" \
@@ -75,6 +81,41 @@ for d in json.load(sys.stdin):
         else
             tag_discussion "$num" "changes-requested" || true
             log "🔄 Changes requested #$num"
+
+            # Write P1/P2 findings to todos/
+            local todos_dir="$TARGET_PROJECT/todos"
+            if [ -d "$todos_dir" ]; then
+                local todo_count next_num safe_title
+                todo_count=$(ls "$todos_dir"/*.md 2>/dev/null | wc -l | tr -d ' ')
+                next_num=$(printf "%03d" $((todo_count + 1)))
+                safe_title=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | head -c 40)
+
+                echo "$review_result" | python3 -c "
+import sys, os
+review = sys.stdin.read()
+todos_dir = '$todos_dir'
+num = int('$next_num')
+safe_title = '$safe_title'
+lines = review.split('\n')
+current_priority = None
+findings = []
+for line in lines:
+    if 'P1' in line and ('Must Fix' in line or 'CRITICAL' in line.upper()):
+        current_priority = 'p1'
+    elif 'P2' in line and ('Should Fix' in line or 'IMPORTANT' in line.upper()):
+        current_priority = 'p2'
+    elif 'P3' in line or '###' in line:
+        current_priority = None
+    elif current_priority and line.strip().startswith('- '):
+        findings.append((current_priority, line.strip()))
+for i, (priority, finding) in enumerate(findings):
+    todo_num = f'{num + i:03d}'
+    status = 'ready' if priority == 'p1' else 'pending'
+    fname = f'{todo_num}-{status}-{priority}-{safe_title}.md'
+    with open(os.path.join(todos_dir, fname), 'w') as f:
+        f.write(f'---\nstatus: {status}\npriority: {priority}\nsource: code-review\n---\n\n{finding}\n')
+" 2>/dev/null || true
+            fi
         fi
 
         mark_processed "$num" "$AGENT" "reviewed"
