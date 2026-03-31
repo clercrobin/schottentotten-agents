@@ -374,7 +374,7 @@ update_discussion_title() {
         -F repo="$GITHUB_REPO" \
         -F num="$discussion_number" \
         -f query='
-        query($owner: String!, $repo: String!) {
+        query($owner: String!, $repo: String!, $num: Int!) {
           repository(owner: $owner, name: $repo) {
             discussion(number: $num) { id }
           }
