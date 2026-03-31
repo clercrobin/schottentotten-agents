@@ -22,20 +22,18 @@ log() { echo "[$(date '+%H:%M:%S')] [ENG] $*"; }
 run_work() {
     log "👷 Looking for approved plans..."
 
-    # Pick up CTO-approved plans from the Planning category
+    # Pick up items with [APPROVED] in title from Triage
     local plans
-    plans=$(get_discussions "$CAT_PLANNING" 20) || return 0
+    plans=$(get_discussions "$CAT_TRIAGE" 20) || return 0
 
-    # Find plans that have been approved by CTO but not yet implemented
+    # Find items in APPROVED status (title contains [APPROVED])
     local candidates
     candidates=$(echo "$plans" | python3 -c "
 import sys, json
 try:
     discussions = json.load(sys.stdin)
     for d in discussions:
-        comments = ' '.join(d.get('last_comments', []))
-        has_approval = 'plan-approved' in comments.lower() or ('approved' in comments.upper() and 'Agent CTO' in comments)
-        if has_approval:
+        if '[APPROVED]' in d.get('title', ''):
             print(json.dumps(d))
 except (json.JSONDecodeError, KeyError):
     pass

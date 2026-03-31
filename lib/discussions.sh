@@ -245,7 +245,7 @@ get_discussions() {
         -f query='
         query($owner: String!, $repo: String!, $catId: ID!, $limit: Int!) {
           repository(owner: $owner, name: $repo) {
-            discussions(first: $limit, categoryId: $catId, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            discussions(first: $limit, categoryId: $catId, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
               nodes {
                 number
                 title
@@ -302,7 +302,7 @@ get_unprocessed() {
         -f query='
         query($owner: String!, $repo: String!, $catId: ID!) {
           repository(owner: $owner, name: $repo) {
-            discussions(first: 20, categoryId: $catId, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            discussions(first: 20, categoryId: $catId, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
               nodes {
                 number
                 title

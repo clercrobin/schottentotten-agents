@@ -38,6 +38,8 @@ import sys, json, re
 priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 try:
     discussions = json.load(sys.stdin)
+    # Only pick up items in [TRIAGE] status — not [APPROVED], [BUILDING], etc.
+    discussions = [d for d in discussions if '[TRIAGE]' in d.get('title', '')]
     def get_priority(d):
         m = re.search(r'\[(CRITICAL|HIGH|MEDIUM|LOW)\]', d.get('title', ''), re.IGNORECASE)
         return priority_order.get(m.group(1).lower(), 9) if m else 9
