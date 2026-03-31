@@ -50,6 +50,22 @@ run_intake() {
         }
       }
     }' --jq '[.data.repository.discussions.nodes[] | select(.category.name == "Ideas") | select(.title | test("Plan:") | not)]' 2>/dev/null || echo "[]")
+    # Filter out already-processed Ideas
+    ideas=$(printf '%s' "$ideas" | python3 -c "
+import sys, json
+ideas = json.loads(sys.stdin.read())
+# Read processed log to skip already-handled Ideas
+processed = set()
+try:
+    with open('${STATE_DIR:-state}/processed.log') as f:
+        for line in f:
+            parts = line.strip().split('|')
+            if len(parts) >= 4 and parts[2] == 'product-manager' and parts[3] == 'idea-processed':
+                processed.add(parts[1])
+except: pass
+filtered = [i for i in ideas if str(i['number']) not in processed]
+print(json.dumps(filtered))
+" 2>/dev/null || echo "$ideas")
     ideas_count=$(printf '%s' "$ideas" | python3 -c "import sys,json; print(len(json.loads(sys.stdin.read())))" 2>/dev/null || echo "0")
     log "  Ideas discussions: $ideas_count"
 
@@ -143,6 +159,15 @@ $result
 *⏸️ Agents are paused on this item until you reply. All other work continues.*" "$AGENT_PM" || true
             log "❓ Escalated to human: $title"
         fi
+    done
+
+    # Mark Ideas as processed so they don't re-trigger
+    printf '%s' "$ideas" | python3 -c "
+import sys, json
+for i in json.loads(sys.stdin.read()):
+    print(i['number'])
+" 2>/dev/null | while read -r idea_num; do
+        mark_processed "$idea_num" "$AGENT" "idea-processed"
     done
 
     log "✅ Intake complete"
