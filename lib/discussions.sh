@@ -28,9 +28,11 @@ mkdir -p "$_CAT_CACHE_DIR"
 _check_graphql_response() {
     local json="$1"
     echo "$json" | python3 -c "
-import sys, json
+import sys, json, re
 try:
-    data = json.load(sys.stdin)
+    raw = sys.stdin.read()
+    raw = re.sub(r'[\x00-\x1f\x7f]', lambda m: ' ' if m.group() not in '\n\r\t' else m.group(), raw)
+    data = json.loads(raw)
     if 'errors' in data:
         msgs = [e.get('message', '?') for e in data['errors']]
         print('GraphQL errors: ' + '; '.join(msgs), file=sys.stderr)

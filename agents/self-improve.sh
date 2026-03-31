@@ -66,7 +66,7 @@ run_learn() {
 
     # Check if CLAUDE.md updates were suggested
     if echo "$result" | grep -qi "CLAUDE.MD UPDATE"; then
-        post_discussion "$CAT_ENGINEERING" "🧬 CLAUDE.md update suggested" \
+        post_or_update "$CAT_ENGINEERING" "🧬 CLAUDE.md update suggested" \
 "The self-improvement agent analyzed $solution_count solutions and $todo_count todos and suggests these updates to the project's CLAUDE.md:
 
 $result
