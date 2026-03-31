@@ -359,3 +359,45 @@ tag_discussion() {
     local tag="$2"
     reply_to_discussion "$discussion_number" "**Status:** \`$tag\`" "system"
 }
+
+# ────────────────────────────────────────────
+# Post or update a "pinned" discussion — reuses an existing
+# discussion with the same title prefix instead of creating a new one.
+# Use for recurring reports (quality gate, security, staging status).
+#
+# Usage: post_or_update "Category" "Title Prefix" "Body" "agent-label"
+# Returns: discussion number
+# ────────────────────────────────────────────
+post_or_update() {
+    local category_name="$1"
+    local title_prefix="$2"
+    local body="$3"
+    local agent_label="${4:-system}"
+
+    local env_tag="${ENV_NAME:-prod}"
+
+    # Search for existing discussion with this prefix
+    local existing_num
+    existing_num=$(get_discussions "$category_name" 20 2>/dev/null | ENV_TAG="$env_tag" TITLE_PREFIX="$title_prefix" python3 -c "
+import sys, json, os
+env_tag = os.environ.get('ENV_TAG', 'prod')
+prefix = os.environ.get('TITLE_PREFIX', '')
+try:
+    for d in json.load(sys.stdin):
+        title = d.get('title', '')
+        if prefix in title:
+            print(d['number'])
+            break
+except (json.JSONDecodeError, KeyError):
+    pass
+" 2>/dev/null)
+
+    if [ -n "$existing_num" ]; then
+        # Update: reply to existing discussion
+        reply_to_discussion "$existing_num" "$body" "$agent_label" || return 1
+        echo "$existing_num"
+    else
+        # Create new discussion
+        post_discussion "$category_name" "$title_prefix" "$body" "$agent_label"
+    fi
+}

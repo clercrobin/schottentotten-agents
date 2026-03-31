@@ -102,7 +102,7 @@ else: print('skipped')
         log "✅ ALL PASS — $run_sha"
 
         # Post the report to Engineering
-        post_discussion "$CAT_ENGINEERING" "🚦 Staging: ✅ READY — \`$run_sha\`" \
+        post_or_update "$CAT_ENGINEERING" "🚦 Staging Quality Gate" \
 "## Staging Quality Gate
 
 | Gate | Status |
@@ -143,7 +143,7 @@ Reply here with your decision:
         local failed_log
         failed_log=$(gh run view "$run_id" --repo "$target_repo" --log-failed 2>/dev/null | tail -20)
 
-        post_discussion "$CAT_ENGINEERING" "🚦 Staging: ❌ BLOCKED — \`$run_sha\`" \
+        post_or_update "$CAT_ENGINEERING" "🚦 Staging Quality Gate" \
 "## Staging Quality Gate
 
 | Gate | Status |

@@ -162,7 +162,7 @@ run_staging() {
 $(echo -e "$conflict_branches")"
     fi
 
-    post_discussion "$CAT_ENGINEERING" "🧪 [$ENV_NAME] Branch rebuilt — $merged/$pr_count PRs merged" \
+    post_or_update "$CAT_ENGINEERING" "🧪 Staging Status" \
 "$summary
 
 **Deploy URL:** ${DEPLOY_URL:-N/A}

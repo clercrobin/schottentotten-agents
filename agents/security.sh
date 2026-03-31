@@ -195,7 +195,7 @@ run_deploy_check() {
     fi
 
     if [ "$has_issues" = true ]; then
-        post_discussion "$CAT_ENGINEERING" "🛡️ [${ENV_NAME:-prod}] Security: deploy issues" \
+        post_or_update "$CAT_ENGINEERING" "🛡️ Security: deploy"  \
 "**URL:** $url
 $(echo -e "$findings")
 

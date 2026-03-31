@@ -106,7 +106,7 @@ run_monitor() {
     log "  Checks: $checks | Failures: $failures"
 
     if [ -n "$incidents" ]; then
-        post_discussion "$CAT_ENGINEERING" "🚨 SRE Alert: ${failures} issue(s) detected" \
+        post_or_update "$CAT_ENGINEERING" "🚨 SRE Health Monitor" \
 "## Environment Health Report
 
 **Checked:** $checks environments
