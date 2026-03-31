@@ -142,50 +142,31 @@ run_cycle() {
         rotate_logs
     fi
 
-    # ── Shell-based queue checks (0 sessions) ──────────────
+    # ── Queue checks (0 sessions) ──────────────
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
     local staging_branch="${DEPLOY_BRANCH:-staging}"
     local focus_mode="${FOCUS_MODE:-false}"
 
     local has_open_prs
     has_open_prs=$(gh pr list --repo "$target_repo" --state open --base "$staging_branch" --json number --jq 'length' 2>/dev/null || echo "0")
+    local has_new_issues
+    has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
 
-    log "  PRs: $has_open_prs | Focus: $focus_mode"
+    log "  PRs: $has_open_prs | Issues: $has_new_issues | Focus: $focus_mode"
 
     # ════════════════════════════════════════════
-    # PHASE 1: DISCOVER
-    #   Skipped in focus mode — no new scanning, no new triage
+    # PHASE 1: DISCOVER (human input always, scans only in normal mode)
     # ════════════════════════════════════════════
-    if [ "$focus_mode" = "true" ]; then
-        # Focus mode: still check for human input (Ideas + Q&A), skip scanning
-        local has_new_issues has_open_decisions
-        has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
-        has_open_decisions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title category { name } } } } }' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Q&A")] | length' 2>/dev/null || echo "0")
+    if [ "$has_new_issues" -gt 0 ]; then
+        run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
+    fi
+    run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
+    run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
 
-        if [ "$has_new_issues" -gt 0 ] || [ "$has_open_decisions" -gt 0 ]; then
-            run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
-            run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
-        else
-            log "⏭️  Discovery: focus mode — no human input, skipping scans"
-        fi
-    else
-        local has_new_issues has_open_decisions
-        has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
-        has_open_decisions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title category { name } } } } }' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Q&A")] | length' 2>/dev/null || echo "0")
-
-        if [ "$has_new_issues" -gt 0 ] || [ "$has_open_decisions" -gt 0 ]; then
-            run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
-            run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
-        else
-            log "⏭️  PM: no new issues or decisions — skipping"
-        fi
-
-        run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
-
-        if [ $((CYCLE % 5)) -eq 1 ]; then
-            run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
-            run_step "$SCRIPT_DIR/agents/security.sh" "scan"
-        fi
+    # Scans — only in normal mode
+    if [ "$focus_mode" != "true" ] && [ $((CYCLE % 5)) -eq 1 ]; then
+        run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
+        run_step "$SCRIPT_DIR/agents/security.sh" "scan"
     fi
 
     # ════════════════════════════════════════════
@@ -223,22 +204,19 @@ run_cycle() {
     run_step "$SCRIPT_DIR/agents/quality-gate.sh" "check"
 
     # ════════════════════════════════════════════
-    # PHASE 6: LEARN (skip in focus mode)
+    # PHASE 6: LEARN + AUDITS (only in normal mode)
     # ════════════════════════════════════════════
     if [ "$focus_mode" != "true" ]; then
         local has_merged_work
         has_merged_work=$(gh pr list --repo "$target_repo" --state merged --base "$staging_branch" --json mergedAt --jq "[.[] | select(.mergedAt > \"$(date -u -v-1H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '2000-01-01')\")]| length" 2>/dev/null || echo "0")
         if [ "$has_merged_work" -gt 0 ]; then
             run_step "$SCRIPT_DIR/agents/compound.sh" "extract"
-        else
-            log "⏭️  Compound: no recently merged work — skipping"
         fi
 
         if [ $((CYCLE % 5)) -eq 0 ]; then
             run_step "$SCRIPT_DIR/agents/self-improve.sh" "learn"
         fi
 
-        # Periodic audits (staggered, one per cycle)
         case $((CYCLE % 10)) in
             1) run_step "$SCRIPT_DIR/agents/security.sh" "audit" ;;
             3) run_step "$SCRIPT_DIR/agents/docs-writer.sh" "audit" ;;
