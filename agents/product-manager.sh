@@ -90,85 +90,42 @@ for i in json.load(sys.stdin)[:5]:
         intake_context="$intake_context\n### GitHub Issues\n$issues_text"
     fi
 
-    # Ideas discussions
+    # Process each Idea individually — reply to the Idea, update its title
+    # The Idea discussion IS the feature thread. No new discussions created.
     if [ "$ideas_count" != "0" ]; then
-        local ideas_text
-        ideas_text=$(printf '%s' "$ideas" | python3 -c "
+        printf '%s' "$ideas" | python3 -c "
 import sys, json
 for d in json.loads(sys.stdin.read()):
-    body = (d.get('body') or '')[:300]
-    print(f\"### Idea #{d['number']}: {d['title']}\n{body}\n\")
-" 2>/dev/null)
-        intake_context="$intake_context\n### Ideas Discussions\n$ideas_text"
-    fi
+    print(f\"{d['number']}\t{d['title']}\t{(d.get('body') or '')[:500]}\")
+" 2>/dev/null | while IFS=$'\t' read -r idea_num idea_title idea_body; do
+            [ -z "$idea_num" ] && continue
 
-    # Ask Claude to prioritize and spec
-    local pm_prompt
-    pm_prompt=$(load_prompt "pm-intake") || { log "Cannot load pm-intake prompt"; return 1; }
-    pm_prompt=$(render_prompt "$pm_prompt" \
-        INTAKE_CONTEXT "$intake_context")
+            log "  Processing Idea #$idea_num: $idea_title"
 
-    local result
-    result=$(safe_claude "$AGENT" "$pm_prompt" \
-    --allowedTools "Read,Glob,Grep") || {
-        log "⚠️  PM intake failed"
-        return 1
-    }
+            local pm_prompt
+            pm_prompt=$(load_prompt "pm-intake") || continue
+            pm_prompt=$(render_prompt "$pm_prompt" \
+                INTAKE_CONTEXT "### Idea #$idea_num: $idea_title\n$idea_body")
 
-    # Parse result — create Triage items for clear features, Q&A for unclear ones
-    echo "$result" | python3 -c "
-import sys, json
+            local result
+            result=$(safe_claude "$AGENT" "$pm_prompt" \
+            --allowedTools "Read,Glob,Grep") || continue
 
-text = sys.stdin.read()
-# Look for TRIAGE and ESCALATE sections
-triage_items = []
-escalate_items = []
-current = None
-for line in text.split('\n'):
-    if '## TRIAGE' in line.upper() or '## READY' in line.upper():
-        current = 'triage'
-    elif '## ESCALATE' in line.upper() or '## ASK' in line.upper():
-        current = 'escalate'
-    elif line.strip().startswith('###') and current:
-        title = line.strip('# ').strip()
-        if current == 'triage':
-            triage_items.append(title)
-        elif current == 'escalate':
-            escalate_items.append(title)
-
-for item in triage_items:
-    print(f'TRIAGE\t{item}')
-for item in escalate_items:
-    print(f'ESCALATE\t{item}')
-" 2>/dev/null | while IFS=$'\t' read -r action title; do
-        [ -z "$action" ] && continue
-
-        if [ "$action" = "TRIAGE" ]; then
-            post_discussion "$CAT_TRIAGE" "[FEATURE] $title" \
-"**Source:** Product Manager intake
+            # Reply to the original Idea with the PM analysis
+            reply_to_discussion "$idea_num" "## Product Manager Analysis
 
 $result" "$AGENT_PM" || true
-            log "📤 Created triage: $title"
-        elif [ "$action" = "ESCALATE" ]; then
-            post_discussion "$CAT_DECISIONS" "❓ Decision needed: $title" \
-"**@${GITHUB_OWNER} — Product Manager needs your input.**
 
-$result
+            # Move the Idea to Triage category by updating its title
+            # (we can't change category via API, so we update the title to include [TRIAGE])
+            local topic
+            topic=$(echo "$idea_title" | sed 's/^\[.*\] *//')
+            advance_status "$idea_num" "TRIAGE" "$topic" "PM analysis complete. Ready for planning." "$AGENT_PM" 2>/dev/null || true
 
----
-*⏸️ Agents are paused on this item until you reply. All other work continues.*" "$AGENT_PM" || true
-            log "❓ Escalated to human: $title"
-        fi
-    done
-
-    # Mark Ideas as processed so they don't re-trigger
-    printf '%s' "$ideas" | python3 -c "
-import sys, json
-for i in json.loads(sys.stdin.read()):
-    print(i['number'])
-" 2>/dev/null | while read -r idea_num; do
-        mark_processed "$idea_num" "$AGENT" "idea-processed"
-    done
+            mark_processed "$idea_num" "$AGENT" "idea-processed"
+            log "  ✅ Idea #$idea_num → [TRIAGE] $topic"
+        done
+    fi
 
     log "✅ Intake complete"
 }
