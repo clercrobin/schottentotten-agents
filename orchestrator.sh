@@ -145,50 +145,52 @@ run_cycle() {
     # ── Shell-based queue checks (0 sessions) ──────────────
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
     local staging_branch="${DEPLOY_BRANCH:-staging}"
+    local focus_mode="${FOCUS_MODE:-false}"
 
-    local has_new_issues has_open_decisions has_open_triage has_open_plans
-    local has_approved_plans has_open_prs has_unreviewed_prs has_merged_work
-
-    has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
-    has_open_decisions=$(gh search issues --repo "$GITHUB_OWNER/$GITHUB_REPO" --type discussions "Decision needed" --json totalCount --jq '.totalCount' 2>/dev/null || echo "0")
+    local has_open_prs
     has_open_prs=$(gh pr list --repo "$target_repo" --state open --base "$staging_branch" --json number --jq 'length' 2>/dev/null || echo "0")
 
-    log "  Queues: issues=$has_new_issues decisions=$has_open_decisions open_prs=$has_open_prs"
+    log "  PRs: $has_open_prs | Focus: $focus_mode"
 
     # ════════════════════════════════════════════
     # PHASE 1: DISCOVER
-    #   Skip PM if no issues and no pending decisions
+    #   Skipped in focus mode — no new scanning, no new triage
     # ════════════════════════════════════════════
-    if [ "$has_new_issues" -gt 0 ] || [ "$has_open_decisions" -gt 0 ]; then
-        run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
-        run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
+    if [ "$focus_mode" = "true" ]; then
+        log "⏭️  Discovery: focus mode — skipping scans and triage"
     else
-        log "⏭️  PM: no new issues or decisions — skipping"
-    fi
+        local has_new_issues has_open_decisions
+        has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+        has_open_decisions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title category { name } } } } }' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Q&A")] | length' 2>/dev/null || echo "0")
 
-    run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
+        if [ "$has_new_issues" -gt 0 ] || [ "$has_open_decisions" -gt 0 ]; then
+            run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
+            run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
+        else
+            log "⏭️  PM: no new issues or decisions — skipping"
+        fi
 
-    if [ $((CYCLE % 5)) -eq 1 ]; then
-        run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
-        run_step "$SCRIPT_DIR/agents/security.sh" "scan"
+        run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
+
+        if [ $((CYCLE % 5)) -eq 1 ]; then
+            run_step "$SCRIPT_DIR/agents/cto.sh" "scan"
+            run_step "$SCRIPT_DIR/agents/security.sh" "scan"
+        fi
     fi
 
     # ════════════════════════════════════════════
     # PHASE 2: PLAN
-    #   Skip if CTO triage produced nothing new this cycle
     # ════════════════════════════════════════════
     run_step "$SCRIPT_DIR/agents/planner.sh" "plan"
     run_step "$SCRIPT_DIR/agents/cto.sh" "approve-plans"
 
     # ════════════════════════════════════════════
     # PHASE 3: BUILD
-    #   Skip if no approved plans to implement
     # ════════════════════════════════════════════
     run_step "$SCRIPT_DIR/agents/senior-engineer.sh" "work"
 
     # ════════════════════════════════════════════
     # PHASE 4: VERIFY
-    #   Only review if there are open PRs to review
     # ════════════════════════════════════════════
     if [ "$has_open_prs" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/test-runner.sh" "verify"
@@ -196,11 +198,11 @@ run_cycle() {
         run_step "$SCRIPT_DIR/agents/security.sh" "review"
         run_step "$SCRIPT_DIR/agents/senior-engineer.sh" "respond-reviews"
     else
-        log "⏭️  Verify: no open PRs — skipping review"
+        log "⏭️  Verify: no open PRs — skipping"
     fi
 
     # ════════════════════════════════════════════
-    # PHASE 5: SHIP (0 sessions — all shell)
+    # PHASE 5: SHIP (0 sessions)
     # ════════════════════════════════════════════
     if [ "$has_open_prs" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/cto.sh" "review-prs"
@@ -208,43 +210,41 @@ run_cycle() {
     run_step "$SCRIPT_DIR/agents/devops.sh" "staging"
     run_step "$SCRIPT_DIR/agents/devops.sh" "deploy-verify"
     run_step "$SCRIPT_DIR/agents/sre.sh" "monitor"
-    run_step "$SCRIPT_DIR/agents/security.sh" "deploy-check"
     run_step "$SCRIPT_DIR/agents/quality-gate.sh" "check"
 
     # ════════════════════════════════════════════
-    # PHASE 6: LEARN
-    #   Skip compound if no recent merges
+    # PHASE 6: LEARN (skip in focus mode)
     # ════════════════════════════════════════════
-    has_merged_work=$(gh pr list --repo "$target_repo" --state merged --base "$staging_branch" --json mergedAt --jq "[.[] | select(.mergedAt > \"$(date -u -v-1H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '2000-01-01')\")]| length" 2>/dev/null || echo "0")
+    if [ "$focus_mode" != "true" ]; then
+        local has_merged_work
+        has_merged_work=$(gh pr list --repo "$target_repo" --state merged --base "$staging_branch" --json mergedAt --jq "[.[] | select(.mergedAt > \"$(date -u -v-1H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '2000-01-01')\")]| length" 2>/dev/null || echo "0")
+        if [ "$has_merged_work" -gt 0 ]; then
+            run_step "$SCRIPT_DIR/agents/compound.sh" "extract"
+        else
+            log "⏭️  Compound: no recently merged work — skipping"
+        fi
 
-    if [ "$has_merged_work" -gt 0 ]; then
-        run_step "$SCRIPT_DIR/agents/compound.sh" "extract"
-    else
-        log "⏭️  Compound: no recently merged work — skipping"
-    fi
+        if [ $((CYCLE % 5)) -eq 0 ]; then
+            run_step "$SCRIPT_DIR/agents/self-improve.sh" "learn"
+        fi
 
-    if [ $((CYCLE % 5)) -eq 0 ]; then
-        run_step "$SCRIPT_DIR/agents/self-improve.sh" "learn"
-    fi
+        # Periodic audits (staggered, one per cycle)
+        case $((CYCLE % 10)) in
+            1) run_step "$SCRIPT_DIR/agents/security.sh" "audit" ;;
+            3) run_step "$SCRIPT_DIR/agents/docs-writer.sh" "audit" ;;
+            5) run_step "$SCRIPT_DIR/agents/dependency-auditor.sh" "audit" ;;
+            7) run_step "$SCRIPT_DIR/agents/accessibility-auditor.sh" "audit" ;;
+            9) run_step "$SCRIPT_DIR/agents/sre.sh" "env-audit" ;;
+            0) run_step "$SCRIPT_DIR/agents/qa-writer.sh" "generate" ;;
+        esac
 
-    # ════════════════════════════════════════════
-    # PERIODIC AUDITS (1 session, staggered)
-    # ════════════════════════════════════════════
-    case $((CYCLE % 10)) in
-        1) run_step "$SCRIPT_DIR/agents/security.sh" "audit" ;;
-        3) run_step "$SCRIPT_DIR/agents/docs-writer.sh" "audit" ;;
-        5) run_step "$SCRIPT_DIR/agents/dependency-auditor.sh" "audit" ;;
-        7) run_step "$SCRIPT_DIR/agents/accessibility-auditor.sh" "audit" ;;
-        9) run_step "$SCRIPT_DIR/agents/sre.sh" "env-audit" ;;
-        0) run_step "$SCRIPT_DIR/agents/qa-writer.sh" "generate" ;;
-    esac
+        if [ $((CYCLE % 5)) -eq 0 ]; then
+            run_step "$SCRIPT_DIR/agents/quality-gate.sh" "report"
+        fi
 
-    if [ $((CYCLE % 5)) -eq 0 ]; then
-        run_step "$SCRIPT_DIR/agents/quality-gate.sh" "report"
-    fi
-
-    if [ $((CYCLE % 20)) -eq 0 ]; then
-        run_step "$SCRIPT_DIR/agents/release-manager.sh" "changelog"
+        if [ $((CYCLE % 20)) -eq 0 ]; then
+            run_step "$SCRIPT_DIR/agents/release-manager.sh" "changelog"
+        fi
     fi
 
     log_event "orchestrator" "CYCLE_DONE" "Cycle $CYCLE complete"
