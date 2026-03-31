@@ -27,7 +27,7 @@ mkdir -p "$_CAT_CACHE_DIR"
 # ────────────────────────────────────────────
 _check_graphql_response() {
     local json="$1"
-    echo "$json" | python3 -c "
+    printf '%s' "$json" | python3 -c "
 import sys, json, re
 try:
     raw = sys.stdin.read()
