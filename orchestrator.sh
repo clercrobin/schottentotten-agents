@@ -109,9 +109,9 @@ run_step() {
         log_event "orchestrator" "STEP_FAIL" "$agent_name/$agent_mode after ${elapsed}s [session $CYCLE_SESSIONS]"
     fi
 
-    # Small buffer between steps to be kind to rate limits
+    # Brief pause between steps (1s, not 5s — rate limits are per-minute, not per-second)
     if [ "$RUNNING" = "true" ]; then
-        sleep 5
+        sleep 1
     fi
 }
 
@@ -160,8 +160,20 @@ run_cycle() {
     if [ "$has_new_issues" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/product-manager.sh" "intake"
     fi
-    run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
-    run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
+
+    # Check Q&A for human decisions (shell check before Claude session)
+    local has_decisions
+    has_decisions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title category { name } } } } }' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Q&A") | select(.title | contains("Decision"))] | length' 2>/dev/null || echo "0")
+    if [ "$has_decisions" -gt 0 ]; then
+        run_step "$SCRIPT_DIR/agents/product-manager.sh" "check-decisions"
+    fi
+
+    # CTO triage — only if there are open triage discussions to review
+    local has_triage
+    has_triage=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title } } } }' --jq '[.data.repository.discussions.nodes[] | select(.title | contains("TRIAGE"))] | length' 2>/dev/null || echo "0")
+    if [ "$has_triage" -gt 0 ]; then
+        run_step "$SCRIPT_DIR/agents/cto.sh" "triage"
+    fi
 
     # Scans — only in normal mode, and only when there's no work in progress
     # This prevents flooding triage when there are already items being worked on
@@ -177,15 +189,26 @@ run_cycle() {
     fi
 
     # ════════════════════════════════════════════
-    # PHASE 2: PLAN
+    # PHASE 2: PLAN (skip if nothing to plan/approve)
     # ════════════════════════════════════════════
-    run_step "$SCRIPT_DIR/agents/planner.sh" "plan"
-    run_step "$SCRIPT_DIR/agents/cto.sh" "approve-plans"
+    if [ "$has_triage" -gt 0 ]; then
+        run_step "$SCRIPT_DIR/agents/planner.sh" "plan"
+    fi
+
+    local has_planning
+    has_planning=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title } } } }' --jq '[.data.repository.discussions.nodes[] | select(.title | contains("PLANNING"))] | length' 2>/dev/null || echo "0")
+    if [ "$has_planning" -gt 0 ]; then
+        run_step "$SCRIPT_DIR/agents/cto.sh" "approve-plans"
+    fi
 
     # ════════════════════════════════════════════
-    # PHASE 3: BUILD
+    # PHASE 3: BUILD (skip if nothing approved to build)
     # ════════════════════════════════════════════
-    run_step "$SCRIPT_DIR/agents/senior-engineer.sh" "work"
+    local has_approved
+    has_approved=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first:5, states:OPEN) { nodes { title } } } }' --jq '[.data.repository.discussions.nodes[] | select(.title | contains("APPROVED"))] | length' 2>/dev/null || echo "0")
+    if [ "$has_approved" -gt 0 ]; then
+        run_step "$SCRIPT_DIR/agents/senior-engineer.sh" "work"
+    fi
 
     # ════════════════════════════════════════════
     # PHASE 4: VERIFY

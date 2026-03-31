@@ -19,7 +19,7 @@ export TARGET_PROJECT="${TARGET_PROJECT:-$HOME/Workspace/schottentotten}"
 
 # Agent polling interval (seconds) — tune based on your rate limits
 # With Claude Code Max, ~60s is safe to avoid hitting limits
-export POLL_INTERVAL="${POLL_INTERVAL:-60}"
+export POLL_INTERVAL="${POLL_INTERVAL:-30}"
 
 # Max parallel Claude sessions. Each slot = 1 Claude Code Max subscription.
 # With 1 sub: keep at 1 (agents take turns).

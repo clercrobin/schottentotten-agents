@@ -115,8 +115,8 @@ else: print('skipped')
 **CI:** $run_url
 **Staging:** ${DEPLOY_URL:-N/A}" "$AGENT_QUALITY_GATE" || true
 
-        # Ask the human for explicit merge approval in Q&A
-        post_discussion "$CAT_DECISIONS" "🚀 Ready for prod — approve merge? (\`$run_sha\`)" \
+        # Always NEW discussion — each staging state gets its own approval request
+        post_discussion "$CAT_DECISIONS" "🚀 Ready for prod — \`$run_sha\`" \
 "**@${GITHUB_OWNER}** — Staging is green. All gates passed.
 
 | Gate | Status |
@@ -163,23 +163,54 @@ $failed_log
 ---
 *Fix tasks created below. Agents will retry next cycle.*" "$AGENT_QUALITY_GATE" || true
 
-        # Create targeted fix tasks
+        # Create targeted fix tasks WITH the actual error from CI logs
+        # This is what lets agents fix the issue instead of just knowing it failed
+        local error_context
+        error_context=$(gh run view "$run_id" --repo "$target_repo" --log-failed 2>/dev/null | tail -30)
+
         if [ "$unit_result" = "failure" ]; then
-            post_discussion "$CAT_TRIAGE" "[CRITICAL] Unit tests failing on staging" \
+            create_triage "Unit tests failing on staging" \
 "**Priority:** critical — blocks prod release.
-Fix the failing tests. CI run: $run_url" "$AGENT_QUALITY_GATE" || true
+**CI run:** $run_url
+
+### Error from CI log:
+\`\`\`
+$error_context
+\`\`\`
+
+**Action:** Read the failing test output above. Fix either the test selector/assertion or the code it tests. Push to staging." "$AGENT_QUALITY_GATE" || true
         fi
 
         if [ "$smoke_result" = "failure" ]; then
-            post_discussion "$CAT_TRIAGE" "[CRITICAL] Smoke tests failing on staging" \
+            create_triage "Smoke tests failing on staging" \
 "**Priority:** critical — deployed app has broken user flows.
-Staging URL: ${DEPLOY_URL:-N/A}. CI run: $run_url" "$AGENT_QUALITY_GATE" || true
+**Staging URL:** ${DEPLOY_URL:-N/A}
+**CI run:** $run_url
+
+### Error from CI log:
+\`\`\`
+$error_context
+\`\`\`
+
+**Action:** The Playwright smoke test in \`e2e/smoke.spec.js\` is failing. Read the error above — it tells you which selector/assertion failed. Fix the test to match the actual page structure. Common issues:
+- Button text changed (use \`data-testid\` attributes instead of text matching)
+- Element is inside a different container than expected
+- Page renders a landing/splash screen before the main UI
+
+Push fix to staging." "$AGENT_QUALITY_GATE" || true
         fi
 
         if [ "$deploy_result" = "failure" ]; then
-            post_discussion "$CAT_TRIAGE" "[CRITICAL] Staging deploy failed" \
+            create_triage "Staging deploy failed" \
 "**Priority:** critical — build or infra broken.
-CI run: $run_url" "$AGENT_QUALITY_GATE" || true
+**CI run:** $run_url
+
+### Error from CI log:
+\`\`\`
+$error_context
+\`\`\`
+
+**Action:** Read the deploy error above. Common issues: AWS credentials, S3 bucket permissions, build failure. Fix and push to staging." "$AGENT_QUALITY_GATE" || true
         fi
     fi
 
