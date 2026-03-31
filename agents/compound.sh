@@ -13,12 +13,14 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+_AGENT_MODE="${1:-}"
+set --
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
 
-MODE="${1:-extract}"
+MODE="${_AGENT_MODE:-extract}"
 AGENT="compound"
 
 log() { echo "[$(date '+%H:%M:%S')] [COMP] $*"; }

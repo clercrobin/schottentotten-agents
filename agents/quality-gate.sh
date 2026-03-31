@@ -12,12 +12,14 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+_AGENT_MODE="${1:-}"
+set --
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
 source "$SCRIPT_DIR/../lib/state.sh"
 
 # No robust.sh needed — no Claude sessions
-MODE="${1:-check}"
+MODE="${_AGENT_MODE:-check}"
 AGENT="quality-gate"
 
 log() { echo "[$(date '+%H:%M:%S')] [GATE] $*"; }

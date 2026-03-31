@@ -12,13 +12,16 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Prevent agent mode arg from being parsed as project name by config-loader
+_AGENT_MODE="${1:-}"
+set --
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
 source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
 
-MODE="${1:-review}"
+MODE="${_AGENT_MODE:-review}"
 AGENT="reviewer"
 
 log() { echo "[$(date '+%H:%M:%S')] [REV] $*"; }

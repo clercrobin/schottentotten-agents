@@ -6,13 +6,15 @@ set -uo pipefail
 # NOTE: no set -e — we handle errors explicitly
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+_AGENT_MODE="${1:-}"
+set --
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
 source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
 
-MODE="${1:-scan}"
+MODE="${_AGENT_MODE:-scan}"
 AGENT="cto"
 
 log() { echo "[$(date '+%H:%M:%S')] [CTO] $*"; }
