@@ -150,7 +150,7 @@ run_cycle() {
     local has_approved_plans has_open_prs has_unreviewed_prs has_merged_work
 
     has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
-    has_open_decisions=$(gh api graphql -f query='query{repository(owner:"'"$GITHUB_OWNER"'",name:"'"$GITHUB_REPO"'"){discussions(first:5,categoryId:null,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{title category{name} comments(last:1){nodes{body}}}}}' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Q&A") | select(.title | contains("Decision needed"))] | length' 2>/dev/null || echo "0")
+    has_open_decisions=$(gh search issues --repo "$GITHUB_OWNER/$GITHUB_REPO" --type discussions "Decision needed" --json totalCount --jq '.totalCount' 2>/dev/null || echo "0")
     has_open_prs=$(gh pr list --repo "$target_repo" --state open --base "$staging_branch" --json number --jq 'length' 2>/dev/null || echo "0")
 
     log "  Queues: issues=$has_new_issues decisions=$has_open_decisions open_prs=$has_open_prs"
@@ -215,7 +215,7 @@ run_cycle() {
     # PHASE 6: LEARN
     #   Skip compound if no recent merges
     # ════════════════════════════════════════════
-    has_merged_work=$(gh api graphql -f query='query{repository(owner:"'"$GITHUB_OWNER"'",name:"'"$GITHUB_REPO"'"){discussions(first:5,categoryId:null,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{title category{name}}}}' --jq '[.data.repository.discussions.nodes[] | select(.category.name=="Code Review") | select(.title | contains("merged") or contains("approved"))] | length' 2>/dev/null || echo "0")
+    has_merged_work=$(gh pr list --repo "$target_repo" --state merged --base "$staging_branch" --json mergedAt --jq "[.[] | select(.mergedAt > \"$(date -u -v-1H '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '1 hour ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '2000-01-01')\")]| length" 2>/dev/null || echo "0")
 
     if [ "$has_merged_work" -gt 0 ]; then
         run_step "$SCRIPT_DIR/agents/compound.sh" "extract"
