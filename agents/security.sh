@@ -101,8 +101,9 @@ run_review() {
     # Look for [REVIEW] items across ALL open discussions (any category)
     unprocessed=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first: 20, states: OPEN) { nodes { number title body comments(first:3) { nodes { body } } } } } }' --jq '.data.repository.discussions.nodes' 2>/dev/null | python3 -c "
 import sys, json
+raw = sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})
 try:
-    for d in json.load(sys.stdin):
+    for d in json.loads(raw):
         if '[REVIEW]' in d.get('title', ''):
             print(json.dumps(d))
 except: pass
