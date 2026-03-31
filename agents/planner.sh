@@ -28,10 +28,26 @@ log() { echo "[$(date '+%H:%M:%S')] [PLAN] $*"; }
 run_plan() {
     log "📋 Looking for issues to plan..."
 
-    # Use get_discussions and filter by [TRIAGE] status in title
-    # (not get_unprocessed — agent replies shouldn't block re-planning)
+    # Query ALL open discussions with [TRIAGE] or [FEATURE] in title
+    # (Ideas from humans are in Ideas category, not Triage)
     local all_triage
-    all_triage=$(get_discussions "$CAT_TRIAGE" 20) || return 0
+    all_triage=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        discussions(first: 20, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes { number title body comments(first: 5) { nodes { body } } }
+        }
+      }
+    }' --jq '.data.repository.discussions.nodes' 2>/dev/null)
+    # Sanitize
+    all_triage=$(printf '%s' "$all_triage" | python3 -c "
+import sys, json
+raw = sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})
+try:
+    print(json.dumps(json.loads(raw)))
+except:
+    print('[]')
+" 2>/dev/null || echo "[]")
 
     local candidates
     candidates=$(echo "$all_triage" | python3 -c "
