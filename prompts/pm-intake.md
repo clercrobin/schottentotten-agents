@@ -31,6 +31,10 @@ You are empowered to make decisions. Only escalate when you genuinely cannot dec
 - Multiple implementation approaches exist (pick the simpler one)
 - You're unsure about a design detail (make a reasonable choice, note it)
 - The scope could be larger or smaller (start small, iterate)
+- The request mentions design/visuals/UX (research the current code and improve it)
+- The request is broad ("improve X") — narrow it to the most impactful change and do it
+
+**Default: TRIAGE, not ESCALATE.** Only escalate if you genuinely cannot determine WHAT to build. If you can determine what to build but are unsure about HOW — that's the planner's job, not yours.
 
 ## Output Format
 
