@@ -79,10 +79,12 @@ _resolve_category_id() {
 
     local cat_id
     cat_id=$(echo "$all_cats" | MATCH_NAME="$category_name" python3 -c "
-import sys, json, os
+import sys, json, os, re
 target = os.environ['MATCH_NAME']
 try:
-    data = json.load(sys.stdin)
+    raw_text = sys.stdin.read()
+    raw_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw_text)
+    data = json.loads(raw_text)
     cats = data['data']['repository']['discussionCategories']['nodes']
     for c in cats:
         if c['name'] == target:
@@ -269,11 +271,13 @@ get_discussions() {
 
     local env_tag="${ENV_NAME:-prod}"
 
-    echo "$raw" | ENV_TAG="$env_tag" python3 -c "
-import sys, json, os
+    printf '%s' "$raw" | ENV_TAG="$env_tag" python3 -c "
+import sys, json, os, re
 env_tag = os.environ.get('ENV_TAG', 'prod')
 try:
-    data = json.load(sys.stdin)
+    raw_text = sys.stdin.read()
+    raw_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw_text)
+    data = json.loads(raw_text)
     discussions = data['data']['repository']['discussions']['nodes']
     # Filter by env tag
     discussions = [d for d in discussions if d.get('title', '').startswith(f'[{env_tag}]')]
@@ -329,12 +333,14 @@ get_unprocessed() {
 
     local env_tag="${ENV_NAME:-prod}"
 
-    echo "$raw" | AGENT_LABEL="$agent_label" ENV_TAG="$env_tag" python3 -c "
-import sys, json, os
+    printf '%s' "$raw" | AGENT_LABEL="$agent_label" ENV_TAG="$env_tag" python3 -c "
+import sys, json, os, re
 agent_label = os.environ['AGENT_LABEL']
 env_tag = os.environ['ENV_TAG']
 try:
-    data = json.load(sys.stdin)
+    raw_text = sys.stdin.read()
+    raw_text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw_text)
+    data = json.loads(raw_text)
     discussions = data['data']['repository']['discussions']['nodes']
     filtered = []
     for d in discussions:
@@ -442,7 +448,7 @@ post_or_update() {
     # Search for existing discussion with this prefix
     local existing_num
     existing_num=$(get_discussions "$category_name" 20 2>/dev/null | ENV_TAG="$env_tag" TITLE_PREFIX="$title_prefix" python3 -c "
-import sys, json, os
+import sys, json, os, re
 env_tag = os.environ.get('ENV_TAG', 'prod')
 prefix = os.environ.get('TITLE_PREFIX', '')
 try:
