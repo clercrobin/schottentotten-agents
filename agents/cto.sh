@@ -324,9 +324,22 @@ run_standup() {
 run_approve_plans() {
     log "📋 Reviewing plans for approval..."
 
-    # Find triage discussions in [PLANNING] status
+    # Find ALL open discussions in [PLANNING] status (any category)
     local discussions
-    discussions=$(get_discussions "$CAT_TRIAGE" 20) || return 0
+    discussions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        discussions(first: 20, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes { number title body comments(first: 5) { nodes { body } } }
+        }
+      }
+    }' --jq '.data.repository.discussions.nodes' 2>/dev/null)
+    discussions=$(printf '%s' "$discussions" | python3 -c "
+import sys, json
+raw = sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})
+try: print(json.dumps(json.loads(raw)))
+except: print('[]')
+" 2>/dev/null || echo "[]")
 
     # Extract PLANNING items one at a time — use JSON lines to avoid tab/newline issues
     local planning_items
