@@ -27,7 +27,18 @@ run_review() {
     log "🔎 Looking for PRs to review..."
 
     local unprocessed
-    unprocessed=$(get_unprocessed "$CAT_CODE_REVIEW" "$AGENT_REVIEWER") || return 0
+    # Look for [REVIEW] items in Triage (lifecycle model)
+    unprocessed=$(get_discussions "$CAT_TRIAGE" 20 2>/dev/null | python3 -c "
+import sys, json
+try:
+    for d in json.load(sys.stdin):
+        if '[REVIEW]' in d.get('title', ''):
+            print(json.dumps(d))
+except: pass
+" 2>/dev/null)
+    [ -z "$unprocessed" ] && { log "No PRs to review."; return 0; }
+    # Wrap back into JSON array for the downstream parser
+    unprocessed="[$(echo "$unprocessed" | paste -sd ',' -)]"
 
     echo "$unprocessed" | python3 -c "
 import sys, json
