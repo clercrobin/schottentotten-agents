@@ -155,7 +155,7 @@ run_cycle() {
     }' --jq '.data.repository.discussions.nodes[] | "\(.category.name)\t\(.title)"' 2>/dev/null || echo "")
 
     local has_triage has_planning has_approved has_review has_decisions
-    has_triage=$(echo "$all_titles" | grep -c "\[TRIAGE\]" || echo "0")
+    has_triage=$(echo "$all_titles" | grep -cE "\[TRIAGE\]|\[FEATURE\]" || echo "0")
     has_planning=$(echo "$all_titles" | grep -c "\[PLANNING\]" || echo "0")
     has_approved=$(echo "$all_titles" | grep -c "\[APPROVED\]" || echo "0")
     has_review=$(echo "$all_titles" | grep -c "\[REVIEW\]" || echo "0")
