@@ -165,6 +165,10 @@ run_cycle() {
     has_open_prs=$(gh pr list --repo "$target_repo" --state open --base "$staging_branch" --json number --jq 'length' 2>/dev/null || echo "0")
     local has_new_issues
     has_new_issues=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+    # Also check for new Ideas in the agents repo (human feature requests)
+    local has_new_ideas
+    has_new_ideas=$(echo "$all_titles" | grep -c "Ideas" || echo "0")
+    has_new_issues=$((has_new_issues + has_new_ideas))
 
     # Check staging CI status (shell)
     local staging_ci
