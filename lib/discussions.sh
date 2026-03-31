@@ -263,7 +263,7 @@ get_discussions() {
         }') || { echo "[]"; return 1; }
 
     # Sanitize control characters from discussion bodies before JSON parsing
-    raw=$(echo "$raw" | tr -d '\000-\010\013\014\016-\037')
+    raw=$(printf '%s' "$raw" | python3 -c "import sys,re; sys.stdout.write(re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', sys.stdin.read()))" 2>/dev/null || echo "$raw")
 
     _check_graphql_response "$raw" || { echo "[]"; return 1; }
 
@@ -323,7 +323,7 @@ get_unprocessed() {
         }') || { echo "[]"; return 1; }
 
     # Sanitize control characters from discussion bodies before JSON parsing
-    raw=$(echo "$raw" | tr -d '\000-\010\013\014\016-\037')
+    raw=$(printf '%s' "$raw" | python3 -c "import sys,re; sys.stdout.write(re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', sys.stdin.read()))" 2>/dev/null || echo "$raw")
 
     _check_graphql_response "$raw" || { echo "[]"; return 1; }
 
