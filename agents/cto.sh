@@ -328,17 +328,34 @@ run_approve_plans() {
     local discussions
     discussions=$(get_discussions "$CAT_TRIAGE" 20) || return 0
 
-    echo "$discussions" | python3 -c "
-import sys, json
-for d in json.load(sys.stdin):
-    if '[PLANNING]' in d.get('title', ''):
-        title = d['title'].replace('\t', ' ')
-        # Get the plan from the last comments
-        plan = '\n'.join(d.get('last_comments', [])[-2:])[:3000].replace('\t', ' ')
-        print(f\"{d['number']}\t{title}\t{plan}\")
-" 2>/dev/null | while IFS=$'\t' read -r num title plan_body; do
-        [ -z "$num" ] && continue
+    # Extract PLANNING items one at a time — use JSON lines to avoid tab/newline issues
+    local planning_items
+    planning_items=$(printf '%s' "$discussions" | python3 -c "
+import sys, json, re
+raw = sys.stdin.read()
+raw = raw.translate({i: None for i in range(32) if i not in (9, 10, 13)})
+try:
+    for d in json.loads(raw):
+        if '[PLANNING]' in d.get('title', ''):
+            print(json.dumps({
+                'number': d['number'],
+                'title': d['title'],
+                'plan': ' '.join(d.get('last_comments', [])[-2:])[:3000]
+            }))
+except: pass
+" 2>/dev/null)
 
+    [ -z "$planning_items" ] && { log "No plans to approve."; return 0; }
+
+    echo "$planning_items" | while IFS= read -r item_json; do
+        [ -z "$item_json" ] && continue
+
+        local num title plan_body
+        num=$(echo "$item_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['number'])" 2>/dev/null)
+        title=$(echo "$item_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])" 2>/dev/null)
+        plan_body=$(echo "$item_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['plan'])" 2>/dev/null)
+
+        [ -z "$num" ] && continue
         is_processed "$num" "$AGENT" "plan-reviewed" && continue
 
         log "Reviewing plan #$num: $title"
