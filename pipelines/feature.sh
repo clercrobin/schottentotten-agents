@@ -90,7 +90,7 @@ process_feature() {
     local fid="$1"
     local t0 max_iter iter
     t0=$(date +%s)
-    max_iter=12
+    max_iter=20
     iter=0
 
     log "═══ Feature #$fid ═══"

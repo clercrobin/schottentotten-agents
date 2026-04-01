@@ -53,11 +53,14 @@ if [ "$use_worktree" = "true" ]; then
     # Worktree: isolated copy — enables parallel features without branch conflicts
     work_dir="/tmp/agent-wt-${FEATURE_ID}"
 
-    # Fresh build: clean any stale worktree + local branch from previous iteration
-    if [ "$fresh_build" = true ] && [ -d "$work_dir" ]; then
-        log "  Cleaning stale worktree for fresh build"
-        git worktree remove "$work_dir" --force 2>/dev/null || rm -rf "$work_dir"
+    # Fresh build: clean any stale worktree + local/remote branch from previous iteration
+    if [ "$fresh_build" = true ]; then
+        [ -d "$work_dir" ] && {
+            log "  Cleaning stale worktree for fresh build"
+            git worktree remove "$work_dir" --force 2>/dev/null || rm -rf "$work_dir"
+        }
         git branch -D "$local_branch" 2>/dev/null || true
+        git push origin --delete "$local_branch" 2>/dev/null || true
     fi
 
     if [ -d "$work_dir" ]; then
