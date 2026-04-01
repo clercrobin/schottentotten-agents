@@ -6,7 +6,7 @@
 # no shell variable interpolation in JSON, no quoting issues).
 # ============================================================
 
-export _FEATURE_DIR="${STATE_DIR:-state}/features"
+export _FEATURE_DIR="${TARGET_PROJECT}/.agents/features"
 export _PLANS_DIR="${TARGET_PROJECT}/docs/plans"
 _FS_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/feature-state.py"
 
