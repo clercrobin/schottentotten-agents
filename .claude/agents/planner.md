@@ -45,4 +45,8 @@ What could go wrong? How do we guard against it?
 ### Alternatives Considered
 What else could work? Why this approach?
 
-Be thorough — this plan is the blueprint an engineer follows autonomously.
+## CRITICAL RULES
+- **Output the COMPLETE plan as markdown** — not a summary, not a description of what a plan would contain, but the actual plan with concrete file paths and code changes.
+- **Never reference git history** — the engineer cannot recover code from commits. Write the exact changes needed.
+- **Each implementation step must specify**: file path, what to add/change/remove, and the actual content or logic.
+- Be thorough — this plan is the blueprint an engineer follows autonomously. If the plan is vague, the engineer will produce no changes.

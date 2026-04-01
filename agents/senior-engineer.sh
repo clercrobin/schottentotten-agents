@@ -40,6 +40,10 @@ local_branch="agent/${FEATURE_ID}-$(echo "$topic" | tr '[:upper:]' '[:lower:]' |
 base_branch="${DEPLOY_BRANCH:-staging}"
 use_worktree="${USE_WORKTREE:-true}"
 work_dir=""
+# Check if state has a branch — empty means pipeline reset (fresh build needed)
+state_branch=$(feature_field "$FEATURE_ID" "branch")
+fresh_build=false
+[ -z "$state_branch" ] || [ "$state_branch" = "null" ] || [ "$state_branch" = "None" ] && fresh_build=true
 
 cd "$TARGET_PROJECT"
 git fetch origin 2>/dev/null || true
@@ -49,11 +53,18 @@ if [ "$use_worktree" = "true" ]; then
     # Worktree: isolated copy — enables parallel features without branch conflicts
     work_dir="/tmp/agent-wt-${FEATURE_ID}"
 
+    # Fresh build: clean any stale worktree + local branch from previous iteration
+    if [ "$fresh_build" = true ] && [ -d "$work_dir" ]; then
+        log "  Cleaning stale worktree for fresh build"
+        git worktree remove "$work_dir" --force 2>/dev/null || rm -rf "$work_dir"
+        git branch -D "$local_branch" 2>/dev/null || true
+    fi
+
     if [ -d "$work_dir" ]; then
         log "  Resuming worktree $work_dir"
         cd "$work_dir"
         git pull --ff-only 2>/dev/null || true
-    elif git rev-parse "origin/$local_branch" >/dev/null 2>&1; then
+    elif [ "$fresh_build" != true ] && git rev-parse "origin/$local_branch" >/dev/null 2>&1; then
         log "  Worktree from remote $local_branch"
         git worktree add "$work_dir" "origin/$local_branch" 2>/dev/null || \
             git worktree add -b "$local_branch" "$work_dir" "origin/$local_branch"
@@ -61,11 +72,9 @@ if [ "$use_worktree" = "true" ]; then
         git checkout -B "$local_branch" "origin/$local_branch" 2>/dev/null || true
     else
         log "  New worktree $local_branch from $base_branch"
+        git branch -D "$local_branch" 2>/dev/null || true
         git worktree add -b "$local_branch" "$work_dir" "origin/$base_branch" 2>/dev/null || {
-            # Branch may already exist locally
-            git worktree add "$work_dir" "$local_branch" 2>/dev/null || {
-                log "Cannot create worktree"; exit 1
-            }
+            log "Cannot create worktree"; exit 1
         }
         cd "$work_dir"
     fi
