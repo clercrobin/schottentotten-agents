@@ -18,11 +18,15 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-_AGENT_MODE="${1:-}"
+# Save args before config-loader clears them
+_ALL_ARGS=("$@")
+_AGENT_MODE="${_ALL_ARGS[-1]:-}"
+# Strip flags to get just the action
+for _a in "${_ALL_ARGS[@]}"; do case "$_a" in --project|--env) ;; -*) _AGENT_MODE="$_a" ;; *) _AGENT_MODE="$_a" ;; esac; done
 set --
 source "$SCRIPT_DIR/config-loader.sh"
-eval "$(parse_project_flag "$@")"
-eval "$(parse_env_flag "$@")"
+eval "$(parse_project_flag "${_ALL_ARGS[@]}")"
+eval "$(parse_env_flag "${_ALL_ARGS[@]}")"
 source "$SCRIPT_DIR/lib/state.sh"
 source "$SCRIPT_DIR/lib/robust.sh"
 source "$SCRIPT_DIR/lib/feature-state.sh"
