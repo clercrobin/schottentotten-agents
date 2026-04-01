@@ -1,5 +1,5 @@
 # Coding Style — auto-extracted from codebase
-# Last updated: 2026-04-01
+# Last updated: 2026-04-02
 
 ## Naming
 
@@ -33,6 +33,8 @@
 - **Tactics drain pattern**: `makeTacticsState()` calls `declineClaim(state)` after `createGame({ variant: "tactics" })` — mandatory because the variant always starts with a blocking `pendingClaim`.
 - **Exported functions for direct testing**: Server-side helpers like `finalizeGame` should be exported so tests exercise the real function, not a replica.
 - **Replica test files**: When a server function cannot be exported (e.g. `connectionsByIp` tracking), tests may replicate the logic in-process. The replica file must open with an explicit "Replicates X from server/index.js — update if that logic changes" comment. See `tests/server-ws-ip.test.js`.
+- **vi.mock heavy deps for App.jsx tests**: `tests/app-utils.test.js` is the canonical example — always mock `../shared/mcts.js`, `../shared/ai-policy.js`, `../shared/engine.js`, `../src/Landing.jsx`, and `../src/i18n.js` to prevent import-time side effects from executing in unit tests.
+- **Node.js 25 `localStorage` regression**: Node.js 25's native `localStorage` global (from `--experimental-webstorage`) overrides jsdom's stub but omits `clear()`. The `tests/setup.js` mock handles this. Add `NODE_NO_WARNINGS=1` to the `test` npm script to suppress the harmless `--localstorage-file was provided without a valid path` warning if running on Node 25+.
 
 ## Architecture
 

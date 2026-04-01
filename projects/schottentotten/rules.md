@@ -1,5 +1,5 @@
 # Project Rules — auto-generated from past work
-# Last updated: 2026-04-01
+# Last updated: 2026-04-02
 
 ## Must-follow rules (from past P1/critical findings)
 
@@ -27,6 +27,8 @@
 
 - **Do not trust `X-Forwarded-For` without a proxy allowlist.** Per-IP rate limits can be bypassed with spoofed headers. Use `req.socket.remoteAddress` when not behind a known proxy, or validate against a configured trusted-proxy list. From: same
 
+- **Pin Node.js version to prevent platform regressions.** Add an `engines` field in `package.json` and an `.nvmrc` file. Node.js 25 introduced a native `localStorage` global (`--experimental-webstorage`) that overrides jsdom's stub and omits `clear()`, breaking 14+ tests without any code change. Pinning catches this in CI before it hits contributors. From: `docs/solutions/2026-03-31-localstorage-mock-node25-jsdom.md`
+
 ## Conventions (from codebase analysis)
 
 - **Test global setup is in `tests/setup.js`.** It installs a full `localStorage` mock via `Object.defineProperty` with `configurable: true`. All new test files benefit automatically — no per-file setup needed.
@@ -46,3 +48,5 @@
 - **Staging merges first, then prod.** PRs merge to `staging` branch, tested, then to `main`. Never push untested code directly to `main`. (Environment rule.)
 
 - **Each environment has its own Terraform directory.** `infra/terraform/staging/`, `infra/terraform/app/`, etc. Never add staging resources to prod Terraform state or vice versa. (Environment rule.)
+
+- **`vi.mock` all heavy deps when testing exported functions from `App.jsx`.** App.jsx imports React, mcts, ai-policy, engine, Landing, and i18n — none of which should execute in unit tests. Always mock: `vi.mock("../shared/mcts.js", ...)`, `vi.mock("../shared/ai-policy.js", ...)`, `vi.mock("../shared/engine.js", ...)`, `vi.mock("../src/Landing.jsx", ...)`, `vi.mock("../src/i18n.js", ...)`. See `tests/app-utils.test.js` as the canonical reference. From: `tests/app-utils.test.js` codebase pattern.
