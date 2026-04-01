@@ -30,7 +30,7 @@ discussion=$(feature_field "$FEATURE_ID" "discussion")
 
 log "🔎 Reviewing #$FEATURE_ID: $topic (PR #$pr_num)"
 
-local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
+target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
 
 # Get diff directly — no Discussion parsing
 diff_content=$(gh pr diff "$pr_num" --repo "$target_repo" 2>/dev/null | head -c 12000)
@@ -60,7 +60,7 @@ if echo "$review_result" | grep -qi "APPROVED"; then
         reply_to_discussion "$discussion" "🔎 **APPROVED.** Ready to merge." "$AGENT" 2>/dev/null || true
     log "✅ Approved #$FEATURE_ID"
 else
-    local note
+    note=""
     note=$(echo "$review_result" | grep -i "P1\|must fix\|CHANGES" | head -3 | tr '\n' ' ')
     feature_add_feedback "$FEATURE_ID" "reviewer" "changes-requested" "$note"
     [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
