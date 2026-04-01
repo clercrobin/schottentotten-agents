@@ -13,6 +13,7 @@ source "$SCRIPT_DIR/../lib/discussions.sh"
 source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
+source "$SCRIPT_DIR/../lib/feature-state.sh"
 
 MODE="${_AGENT_MODE:-scan}"
 AGENT="cto"
