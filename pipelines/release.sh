@@ -72,7 +72,42 @@ check_release() {
     }' --jq '[.data.repository.discussions.nodes[] | select(.category.name == "Q&A") | select(.title | contains("Ready for prod"))] | length' 2>/dev/null || echo "0")
 
     if [ "$pending" -gt 0 ]; then
-        log "Approval already pending"
+        # Check if human already replied "approve"
+        local approved
+        approved=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
+        query($owner: String!, $repo: String!) {
+          repository(owner: $owner, name: $repo) {
+            discussions(first: 5, states: OPEN) {
+              nodes { number title comments(last: 5) { nodes { body } } category { name } }
+            }
+          }
+        }' --jq '[.data.repository.discussions.nodes[] |
+            select(.category.name == "Q&A") |
+            select(.title | contains("Ready for prod")) |
+            select(.comments.nodes[].body | ascii_downcase | contains("approve")) |
+            .number] | first' 2>/dev/null || echo "")
+
+        if [ -n "$approved" ]; then
+            log "🚀 Human approved — merging $from_branch → $to_branch"
+            cd "$TARGET_PROJECT"
+            git checkout "$to_branch" 2>/dev/null || true
+            git pull origin "$to_branch" 2>/dev/null || true
+            if git merge "origin/$from_branch" --no-edit -m "release: approved in Q&A #$approved" 2>/dev/null; then
+                git push origin "$to_branch" 2>&1 | tail -1
+                reply_to_discussion "$approved" "✅ **Shipped to prod.** $from_branch merged to $to_branch." "📦 Release Pipeline" 2>/dev/null || true
+                # Close the Q&A
+                local disc_id
+                disc_id=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -F num="$approved" -f query='query($owner: String!, $repo: String!, $num: Int!) { repository(owner: $owner, name: $repo) { discussion(number: $num) { id } } }' --jq '.data.repository.discussion.id' 2>/dev/null)
+                [ -n "$disc_id" ] && gh api graphql -f id="$disc_id" -f query='mutation($id: ID!) { closeDiscussion(input: { discussionId: $id, reason: RESOLVED }) { discussion { number } } }' 2>/dev/null || true
+                log "✅ Released and Q&A closed"
+            else
+                git merge --abort 2>/dev/null || true
+                log "⚠️ Merge conflict — cannot release"
+            fi
+            git checkout "$from_branch" 2>/dev/null || true
+        else
+            log "Approval pending — waiting for human"
+        fi
         return 0
     fi
 
