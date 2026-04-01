@@ -55,11 +55,14 @@ $feedback
 Output the COMPLETE updated plan."
 else
     log "  New plan"
-    prompt_text=$(load_prompt "planner-plan") || exit 1
-    prompt_text=$(render_prompt "$prompt_text" TASK_TITLE "$topic" TASK_BODY "$topic")
+    # Dynamic context only — agent definition provides the system prompt
+    prompt_text="## Task
+**$topic**
+
+$topic"
 fi
 
-result=$(safe_claude "$AGENT" "$prompt_text" --allowedTools "Bash,Read,Glob,Grep") || exit 1
+result=$(safe_claude "planner" "$prompt_text") || exit 1
 
 mkdir -p "$(dirname "$plan_file")"
 echo "$result" > "$plan_file"

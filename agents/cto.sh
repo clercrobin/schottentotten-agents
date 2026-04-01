@@ -27,12 +27,19 @@ run_scan() {
     log "🔍 Scanning codebase..."
     log "  target: ${TARGET_PROJECT:-.}"
 
-    local prompt_text
-    prompt_text=$(load_prompt "cto-scan") || { log "Cannot load cto-scan prompt"; return 1; }
+    # Dynamic context — CTO agent definition provides base system prompt
+    local prompt_text="Analyze this codebase. Find the single most important NEW issue with the highest compound value.
+
+Check: bugs, security (OWASP), performance, missing tests, architecture issues, TODO/FIXME debt.
+Check environment health: separate TF states per env, env-specific IAM roles, no cross-env references.
+Check agent tooling: can tests/linters/type-checks run?
+
+Output a JSON array: [{\"title\": \"...\", \"priority\": \"critical|high|medium|low\", \"category\": \"bug|security|performance|quality|architecture\", \"description\": \"...\", \"files\": [\"...\"], \"suggested_approach\": \"...\"}]
+
+**Max 1 issue.** Output empty array [] if all issues are already tracked."
 
     local scan_result
-    scan_result=$(safe_claude "$AGENT" "$prompt_text" \
-    --allowedTools "Bash,Read,Glob,Grep") || {
+    scan_result=$(safe_claude "cto" "$prompt_text") || {
         log "⚠️  Claude scan failed (exit=$?)"
         return 1
     }
@@ -156,16 +163,15 @@ for d in json.load(sys.stdin):
 
         log "Reviewing #$num"
 
-        local triage_prompt
-        triage_prompt=$(load_prompt "cto-triage") || continue
-        triage_prompt=$(render_prompt "$triage_prompt" \
-            DISC_NUM "$num" \
-            TITLE "$title" \
-            BODY "$body")
+        # Dynamic context — CTO agent definition provides system prompt
+        local triage_prompt="Review Discussion #$num: $title
+
+$body
+
+Provide technical assessment and priority recommendation."
 
         local response
-        response=$(safe_claude "$AGENT" "$triage_prompt" \
-        --allowedTools "Read,Glob,Grep") || continue
+        response=$(safe_claude "cto" "$triage_prompt") || continue
 
         reply_to_discussion "$num" "$response" "$AGENT_CTO" || continue
         mark_processed "$num" "$AGENT" "triaged"
@@ -344,16 +350,15 @@ run_approve_plans() {
     local plan_size=${#plan_body}
     log "  Plan: $plan_size chars from $plan_file"
 
-    local approve_prompt
-    approve_prompt=$(load_prompt "cto-approve-plan") || return 1
-    approve_prompt=$(render_prompt "$approve_prompt" \
-        DISC_NUM "$fid" \
-        TITLE "$topic" \
-        BODY "$plan_body")
+    # Dynamic context — CTO agent definition provides system prompt
+    local approve_prompt="## Plan #$fid: $topic
+
+$plan_body
+
+Review this plan. Start with **APPROVED** or **NEEDS WORK**."
 
     local response
-    response=$(safe_claude "$AGENT" "$approve_prompt" \
-    --allowedTools "Read,Glob,Grep") || return 1
+    response=$(safe_claude "cto" "$approve_prompt") || return 1
 
     if echo "$response" | grep -qi "APPROVED"; then
         feature_set_status "$fid" "approved"
