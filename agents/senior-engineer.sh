@@ -30,8 +30,8 @@ log "👷 Building #$FEATURE_ID: $topic (status=$status)"
 
 [ ! -f "$plan_file" ] && { log "No plan file: $plan_file"; exit 1; }
 
-# Read plan from disk BEFORE cd to target project
-plan_content=$(cat "$SCRIPT_DIR/../$plan_file" 2>/dev/null || cat "$plan_file" 2>/dev/null || echo "")
+# Plan is in TARGET_PROJECT/docs/plans/ — read it directly
+plan_content=$(cat "$plan_file" 2>/dev/null || echo "")
 [ -z "$plan_content" ] && { log "⚠️ Empty plan file: $plan_file"; exit 1; }
 log "  Plan: ${#plan_content} chars"
 

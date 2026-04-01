@@ -84,4 +84,4 @@ export CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"  # Use sonnet for most tasks, opus
 # credits, so this is mainly a safety rail to prevent runaway sessions.
 export CLAUDE_MAX_BUDGET="${CLAUDE_MAX_BUDGET:-5.00}"
 # Timeout per Claude invocation (seconds). Implementation tasks need more time.
-export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-900}"
+export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-3600}"

@@ -4,7 +4,7 @@ import json, glob, sys, os
 from datetime import datetime, timezone
 
 FEATURE_DIR = os.environ.get("_FEATURE_DIR", "state/features")
-PLANS_DIR = os.environ.get("_PLANS_DIR", "docs/plans")
+PLANS_DIR = os.environ.get("_PLANS_DIR", "docs/plans")  # resolved relative to TARGET_PROJECT
 
 def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
