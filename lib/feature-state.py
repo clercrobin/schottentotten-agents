@@ -86,16 +86,23 @@ elif cmd == "add-feedback":
 
 elif cmd == "find-by-status":
     statuses = set(sys.argv[2:])
+    # Pick most advanced first (finish what's started), then by priority
+    status_advancement = {
+        "reviewed": 0, "review": 1, "building": 2,
+        "approved": 3, "planning": 4, "triage": 5
+    }
     priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    best, best_pri = None, 99
+
+    best, best_adv, best_pri = None, 99, 99
     for f in glob.glob(os.path.join(FEATURE_DIR, "*.json")):
         try:
             with open(f) as fh:
                 d = json.load(fh)
             if d.get("status") in statuses:
+                adv = status_advancement.get(d.get("status"), 9)
                 pri = priority_order.get(d.get("priority", "low"), 9)
-                if pri < best_pri:
-                    best, best_pri = d["id"], pri
+                if (adv, pri) < (best_adv, best_pri):
+                    best, best_adv, best_pri = d["id"], adv, pri
         except: pass
     if best:
         print(best)
