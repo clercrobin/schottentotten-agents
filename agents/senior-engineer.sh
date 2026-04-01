@@ -98,6 +98,7 @@ fi
 
 feature_set_status "$FEATURE_ID" "building"
 feature_set "$FEATURE_ID" "branch" "$local_branch"
+_ORIG_TARGET_PROJECT="$TARGET_PROJECT"
 
 # Dynamic context — engineer agent definition provides system prompt
 impl_prompt="## $topic
@@ -111,7 +112,8 @@ TARGET_PROJECT="$work_dir" result=$(safe_claude "engineer" "$impl_prompt") || {
     # Save partial work
     cd "$work_dir"
     if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-        git add -A
+        git add -u
+        git ls-files --others --exclude-standard | grep -v 'node_modules' | xargs -r git add
         git commit -m "wip: partial #$FEATURE_ID" 2>/dev/null || true
         git push -u origin "$local_branch" 2>/dev/null || true
     fi
@@ -127,7 +129,10 @@ if git diff --cached --quiet && git diff --quiet; then
     exit 0
 fi
 
-git add -A
+# Stage tracked changes only (avoid accidentally committing symlinks, node_modules etc.)
+git add -u
+# Also stage new files, but exclude common noise
+git ls-files --others --exclude-standard | grep -v 'node_modules' | grep -v '.agents/' | xargs -r git add
 git commit -m "feat: $topic (#$FEATURE_ID)" \
     -m "Co-Authored-By: AI Engineer <agent@factory>" || {
     log "⚠️ Commit failed"
@@ -141,8 +146,8 @@ git push -u origin "$local_branch" || {
     exit 1
 }
 
-# Create PR
-target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
+# Create PR — use original TARGET_PROJECT (not worktree path) for repo name
+target_repo="${GITHUB_OWNER}/$(basename "${_ORIG_TARGET_PROJECT:-$TARGET_PROJECT}")"
 pr_url=$(gh pr create \
     --repo "$target_repo" \
     --title "$topic" \

@@ -42,17 +42,22 @@ fi
 
 if [ -n "$feedback" ]; then
     log "  Iterating ($(echo "$feedback" | wc -l | tr -d ' ') feedback items)"
-    prompt_text="Amend this plan based on CTO feedback.
+    prompt_text="Amend this plan based on feedback. Research the CURRENT codebase state first.
 
 ## Feature: $topic
 
-## Current Plan (first 200 lines):
+## Previous Plan (may be outdated — verify against actual code):
 $(head -200 "$plan_file")
 
 ## Feedback:
 $feedback
 
-Output the COMPLETE updated plan."
+## CRITICAL INSTRUCTIONS:
+1. Read the actual source files to understand what CURRENTLY exists
+2. The plan must describe CONCRETE changes from the current state — not what was already done
+3. Each implementation step MUST have: file path, exact change (add/modify/remove), and the actual content
+4. If the previous implementation was already merged, describe what ADDITIONAL changes are needed
+5. Output the COMPLETE plan in the structured format (Summary, Research Findings, Implementation Steps, Files Affected, Test Strategy)"
 else
     log "  New plan"
     # Dynamic context only — agent definition provides the system prompt

@@ -250,6 +250,8 @@ safe_claude() {
     claude_args+=(-p "$prompt")
     claude_args+=(--model "$model")
     claude_args+=(--max-budget-usd "$budget")
+    # Non-interactive mode needs permission bypass for tool use
+    claude_args+=(--permission-mode bypassPermissions)
 
     if [ "$use_agent_mode" = true ]; then
         # Agent mode: system prompt from definition, --add-dir for factory access
