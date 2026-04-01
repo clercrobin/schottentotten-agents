@@ -64,79 +64,97 @@ run_agent() {
 # ────────────────────────────────────────────
 process_feature() {
     local fid="$1"
-    local start_time
+    local start_time max_iterations iteration prev_status
     start_time=$(date +%s)
+    max_iterations=10  # Safety: max agent invocations per feature
+    iteration=0
 
     log "═══ Processing feature #$fid ═══"
 
-    while true; do
-        local status
+    while [ "$iteration" -lt "$max_iterations" ]; do
+        iteration=$((iteration + 1))
+        local status topic
         status=$(feature_field "$fid" "status")
-        local topic
         topic=$(feature_field "$fid" "topic")
 
-        log "  Status: $status | $topic"
+        log "  [$iteration/$max_iterations] $status → $(
+            case "$status" in
+                triage)           echo "planner" ;;
+                planning)         echo "cto approve" ;;
+                approved|building) echo "engineer" ;;
+                review)           echo "reviewer" ;;
+                reviewed)         echo "merge to staging" ;;
+                done)             echo "complete" ;;
+                *)                echo "?" ;;
+            esac
+        )"
 
+        # ── State machine: status → agent ──
         case "$status" in
             triage)
-                run_agent "planner.sh" "$fid" || break
+                run_agent "planner.sh" "$fid"
                 ;;
             planning)
-                run_agent "cto.sh" "approve $fid" || break
-                # Check if CTO rejected — status goes back to triage
-                local new_status
-                new_status=$(feature_field "$fid" "status")
-                if [ "$new_status" = "triage" ]; then
-                    log "  🔄 CTO rejected — planner will iterate"
-                    run_agent "planner.sh" "$fid" || break
-                    continue
-                fi
+                run_agent "cto.sh" "approve $fid"
                 ;;
             approved|building)
-                run_agent "senior-engineer.sh" "$fid" || break
+                run_agent "senior-engineer.sh" "$fid"
                 ;;
             review)
-                local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
-                run_agent "reviewer.sh" "$fid" || break
-                # If reviewed, try to merge PR to staging
-                local new_status
-                new_status=$(feature_field "$fid" "status")
-                if [ "$new_status" = "reviewed" ]; then
-                    local pr_num
-                    pr_num=$(feature_field "$fid" "pr")
-                    if [ -n "$pr_num" ] && [ "$pr_num" != "None" ]; then
-                        log "  🔀 Merging PR #$pr_num to staging"
-                        gh pr merge "$pr_num" --repo "$target_repo" --squash --delete-branch 2>/dev/null && {
-                            feature_set_status "$fid" "done"
-                            local discussion
-                            discussion=$(feature_field "$fid" "discussion")
-                            [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
-                                reply_to_discussion "$discussion" "✅ **Merged to staging.** PR #$pr_num shipped." "🚀 Pipeline" 2>/dev/null || true
-                        } || log "  ⚠️ Merge failed"
+                run_agent "reviewer.sh" "$fid"
+                ;;
+            reviewed)
+                # Merge PR to staging
+                local pr_num target_repo
+                pr_num=$(feature_field "$fid" "pr")
+                target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
+                if [ -n "$pr_num" ] && [ "$pr_num" != "None" ]; then
+                    log "  🔀 Merging PR #$pr_num to staging"
+                    if gh pr merge "$pr_num" --repo "$target_repo" --squash --delete-branch 2>/dev/null; then
+                        feature_set_status "$fid" "done"
+                        local discussion
+                        discussion=$(feature_field "$fid" "discussion")
+                        [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
+                            reply_to_discussion "$discussion" "✅ **Merged to staging.** PR #$pr_num shipped." "🚀 Pipeline" 2>/dev/null || true
+                    else
+                        log "  ⚠️ Merge failed — will retry"
                     fi
+                else
+                    log "  ⚠️ No PR number — cannot merge"
+                    break
                 fi
                 ;;
-            reviewed|done)
-                log "  ✅ Feature #$fid complete"
+            done)
                 break
                 ;;
             *)
-                log "  ❓ Unknown status: $status"
+                log "  ❓ Unknown status: $status — stopping"
                 break
                 ;;
         esac
 
-        # Safety: check if status actually changed (prevent infinite loop)
+        # ── Check what happened ──
         local new_status
         new_status=$(feature_field "$fid" "status")
-        if [ "$new_status" = "$status" ] && [ "$new_status" != "triage" ]; then
-            log "  ⚠️ Status didn't change ($status) — stopping to prevent loop"
+
+        if [ "$new_status" = "done" ]; then
             break
         fi
+
+        # Agent failed to change status — don't loop forever
+        if [ "$new_status" = "$status" ]; then
+            log "  ⚠️ Status unchanged ($status) — agent may have failed, stopping"
+            break
+        fi
+
+        # Log the transition
+        log "  → $status → $new_status"
     done
 
     local elapsed=$(( $(date +%s) - start_time ))
-    log "═══ Feature #$fid done in ${elapsed}s ═══"
+    local final_status
+    final_status=$(feature_field "$fid" "status")
+    log "═══ #$fid: $final_status in ${elapsed}s ($iteration steps) ═══"
 }
 
 # ────────────────────────────────────────────
