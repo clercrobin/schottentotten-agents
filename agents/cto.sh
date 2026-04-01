@@ -324,100 +324,59 @@ run_standup() {
 # approve-plans — Review and approve implementation plans
 # ────────────────────────────────────────────
 run_approve_plans() {
-    log "📋 Reviewing plans for approval..."
+    # Receives: "approve <feature_id>"
+    local fid="${1:-}"
+    [ -z "$fid" ] && { log "No feature ID"; return 0; }
 
-    # Find ALL open discussions in [PLANNING] status (any category)
-    local discussions
-    discussions=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
-    query($owner: String!, $repo: String!) {
-      repository(owner: $owner, name: $repo) {
-        discussions(first: 20, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
-          nodes { number title body comments(first: 5) { nodes { body } } }
-        }
-      }
-    }' --jq '.data.repository.discussions.nodes' 2>/dev/null)
-    discussions=$(printf '%s' "$discussions" | python3 -c "
-import sys, json
-raw = sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})
-try: print(json.dumps(json.loads(raw)))
-except: print('[]')
-" 2>/dev/null || echo "[]")
+    local topic plan_file discussion
+    topic=$(feature_field "$fid" "topic")
+    plan_file=$(feature_field "$fid" "plan")
+    discussion=$(feature_field "$fid" "discussion")
 
-    # Extract PLANNING items one at a time — use JSON lines to avoid tab/newline issues
-    local planning_items
-    planning_items=$(printf '%s' "$discussions" | python3 -c "
-import sys, json, re
-raw = sys.stdin.read()
-raw = raw.translate({i: None for i in range(32) if i not in (9, 10, 13)})
-try:
-    for d in json.loads(raw):
-        if '[PLANNING]' in d.get('title', ''):
-            print(json.dumps({
-                'number': d['number'],
-                'title': d['title'],
-                'plan': ' '.join(d.get('last_comments', [])[-2:])[:3000]
-            }))
-except: pass
-" 2>/dev/null)
+    [ ! -f "$plan_file" ] && { log "No plan file for #$fid"; return 0; }
 
-    [ -z "$planning_items" ] && { log "No plans to approve."; return 0; }
+    log "📋 Reviewing plan #$fid: $topic"
 
-    echo "$planning_items" | while IFS= read -r item_json; do
-        [ -z "$item_json" ] && continue
+    # Read FULL plan from disk — no truncation, no API, no control chars
+    local plan_body
+    plan_body=$(cat "$plan_file")
+    local plan_size=${#plan_body}
+    log "  Plan: $plan_size chars from $plan_file"
 
-        local num title plan_body
-        num=$(echo "$item_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['number'])" 2>/dev/null)
-        title=$(echo "$item_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])" 2>/dev/null)
-        # Fetch FULL plan from the discussion's latest comment (not truncated)
-        plan_body=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -F num="$num" -f query='
-        query($owner: String!, $repo: String!, $num: Int!) {
-          repository(owner: $owner, name: $repo) {
-            discussion(number: $num) {
-              comments(last: 3) { nodes { body } }
-            }
-          }
-        }' --jq '[.data.repository.discussion.comments.nodes[].body] | join("\n---\n")' 2>/dev/null)
-        plan_body=$(printf '%s' "$plan_body" | python3 -c "import sys; print(sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})[:15000])" 2>/dev/null)
+    local approve_prompt
+    approve_prompt=$(load_prompt "cto-approve-plan") || return 1
+    approve_prompt=$(render_prompt "$approve_prompt" \
+        DISC_NUM "$fid" \
+        TITLE "$topic" \
+        BODY "$plan_body")
 
-        [ -z "$num" ] && continue
-        # Title status is the gate, not processed.log
+    local response
+    response=$(safe_claude "$AGENT" "$approve_prompt" \
+    --allowedTools "Read,Glob,Grep") || return 1
 
-        log "Reviewing plan #$num: $title"
-
-        local approve_prompt
-        approve_prompt=$(load_prompt "cto-approve-plan") || continue
-        approve_prompt=$(render_prompt "$approve_prompt" \
-            DISC_NUM "$num" \
-            TITLE "$title" \
-            BODY "$plan_body")
-
-        local response
-        response=$(safe_claude "$AGENT" "$approve_prompt" \
-        --allowedTools "Read,Glob,Grep") || continue
-
-        local topic
-        topic=$(extract_topic "$title")
-
-        if echo "$response" | grep -qi "APPROVED"; then
-            advance_status "$num" "APPROVED" "$topic" "$response" "$AGENT_CTO"
-            log "✅ Plan #$num approved"
-        else
-            advance_status "$num" "TRIAGE" "$topic" "**Plan needs work.**
-
-$response" "$AGENT_CTO"
-            log "🔄 Plan #$num needs work — back to triage"
-        fi
-
-        mark_processed "$num" "$AGENT" "plan-reviewed"
-    done
+    if echo "$response" | grep -qi "APPROVED"; then
+        feature_set_status "$fid" "approved"
+        [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
+            reply_to_discussion "$discussion" "✅ **Plan approved.** Engineer will implement." "$AGENT_CTO" 2>/dev/null || true
+        log "✅ Plan #$fid approved"
+    else
+        # Append feedback — planner will iterate on next cycle
+        local note
+        note=$(echo "$response" | head -5 | tr '\n' ' ')
+        feature_add_feedback "$fid" "cto" "needs-work" "$note"
+        feature_set_status "$fid" "triage"
+        [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
+            reply_to_discussion "$discussion" "🔄 **Plan needs work.** Planner will iterate." "$AGENT_CTO" 2>/dev/null || true
+        log "🔄 Plan #$fid needs work (feedback saved)"
+    fi
 }
 
 # Dispatch
 case "$MODE" in
-    scan)          run_scan ;;
-    triage)        run_triage ;;
-    approve-plans) run_approve_plans ;;
-    review-prs)    run_review_prs ;;
-    standup)       run_standup ;;
-    *)             echo "Usage: $0 {scan|triage|approve-plans|review-prs|standup}"; exit 1 ;;
+    scan)        run_scan ;;
+    triage)      run_triage ;;
+    approve*)    run_approve_plans "${MODE#approve }" ;;
+    review-prs)  run_review_prs ;;
+    standup)     run_standup ;;
+    *)           echo "Usage: $0 {scan|triage|approve <fid>|review-prs|standup}"; exit 1 ;;
 esac

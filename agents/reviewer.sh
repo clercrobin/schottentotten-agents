@@ -1,134 +1,69 @@
 #!/bin/bash
 # ============================================================
-# 🔎 Code Reviewer Agent — Single comprehensive review
+# 🔎 Code Reviewer Agent — Stateful version
 #
-# ONE Claude session covering all 7 domains:
-# security, performance, architecture, data integrity,
-# code quality, deployment safety, test coverage.
-#
-# Previous design: 7 specialist sessions + 1 synthesis = 8 sessions
-# Current design: 1 comprehensive session = 1 session (8x faster)
+# Receives feature ID. Reads state for PR number.
+# Reviews via gh pr diff. Updates state.
 # ============================================================
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Prevent agent mode arg from being parsed as project name by config-loader
 _AGENT_MODE="${1:-}"
 set --
 source "$SCRIPT_DIR/../config-loader.sh"
 source "$SCRIPT_DIR/../lib/discussions.sh"
-source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
+source "$SCRIPT_DIR/../lib/feature-state.sh"
 
-MODE="${_AGENT_MODE:-review}"
+FEATURE_ID="${_AGENT_MODE:-}"
 AGENT="reviewer"
-
 log() { echo "[$(date '+%H:%M:%S')] [REV] $*"; }
 
-run_review() {
-    log "🔎 Looking for PRs to review..."
+[ -z "$FEATURE_ID" ] && { log "No feature ID"; exit 1; }
 
-    local unprocessed
-    # Look for [REVIEW] items across ALL open discussions (any category)
-    local _tmpfile
-    _tmpfile=$(mktemp)
-    gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { discussions(first: 20, states: OPEN) { nodes { number title } } } }' --jq '.data.repository.discussions.nodes' > "$_tmpfile" 2>/dev/null
-    log "  Query: owner=$GITHUB_OWNER repo=$GITHUB_REPO tmpfile=$(wc -c < "$_tmpfile" | tr -d ' ')b"
-    unprocessed=$(python3 "$SCRIPT_DIR/../lib/find_review_items.py" < "$_tmpfile" 2>/dev/null)
-    log "  Found: ${#unprocessed} chars"
-    rm -f "$_tmpfile"
-    [ -z "$unprocessed" ] && { log "No PRs to review."; return 0; }
-    # Parse into tab-separated lines
-    echo "[$unprocessed]" | python3 "$SCRIPT_DIR/../lib/parse_review_items.py" 2>/dev/null | while IFS=$'\t' read -r num title body; do
-        [ -z "$num" ] && continue
+topic=$(feature_field "$FEATURE_ID" "topic")
+pr_num=$(feature_field "$FEATURE_ID" "pr")
+discussion=$(feature_field "$FEATURE_ID" "discussion")
 
-        is_processed "$num" "$AGENT" "reviewed" && continue
+[ -z "$pr_num" ] || [ "$pr_num" = "None" ] && { log "No PR for #$FEATURE_ID"; exit 0; }
 
-        log "Reviewing #$num: $title"
+log "🔎 Reviewing #$FEATURE_ID: $topic (PR #$pr_num)"
 
-        # Get diff
-        local branch_name diff_content=""
-        branch_name=$(echo "$body" | sed -n 's/.*Branch:[[:space:]]*`\([^`]*\)`.*/\1/p' | head -1)
+local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
 
-        if [ -n "$branch_name" ]; then
-            cd "$TARGET_PROJECT"
-            git fetch origin 2>/dev/null || true
-            local base_branch
-            base_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || echo "main")
-            diff_content=$(git diff "$base_branch"..."origin/$branch_name" 2>/dev/null || echo "(could not get diff)")
-        fi
+# Get diff directly — no Discussion parsing
+diff_content=$(gh pr diff "$pr_num" --repo "$target_repo" 2>/dev/null | head -c 12000)
 
-        local pr_number
-        pr_number=$(echo "$body" | sed -n 's|.*pull/\([0-9]*\).*|\1|p' | head -1)
-        if [ -n "$pr_number" ] && { [ -z "$diff_content" ] || [ "$diff_content" = "(could not get diff)" ]; }; then
-            diff_content=$(gh pr diff "$pr_number" --repo "$GITHUB_REPO_FULL" 2>/dev/null || echo "$diff_content")
-        fi
+[ -z "$diff_content" ] && { log "No diff for PR #$pr_num"; exit 0; }
 
-        diff_content="${diff_content:0:12000}"
+log "  Diff: ${#diff_content} chars"
 
-        # ONE comprehensive review — all 7 domains in a single session
-        local review_prompt
-        review_prompt=$(load_prompt "reviewer-comprehensive") || continue
-        review_prompt=$(render_prompt "$review_prompt" \
-            TITLE "$title" \
-            BODY "$body" \
-            DIFF_CONTENT "$diff_content")
+# Review
+review_prompt=$(load_prompt "reviewer-comprehensive") || exit 1
+review_prompt=$(render_prompt "$review_prompt" \
+    TITLE "$topic" \
+    BODY "Feature #$FEATURE_ID — $topic" \
+    DIFF_CONTENT "$diff_content")
 
-        local review_result
-        review_result=$(safe_claude "$AGENT" "$review_prompt" \
-        --allowedTools "Bash,Read,Glob,Grep") || continue
+review_result=$(safe_claude "$AGENT" "$review_prompt" \
+--allowedTools "Bash,Read,Glob,Grep") || exit 1
 
-        reply_to_discussion "$num" "$review_result" "$AGENT_REVIEWER" || continue
+# Post review as PR comment
+gh pr comment "$pr_num" --repo "$target_repo" --body "$review_result" 2>/dev/null || true
 
-        if echo "$review_result" | grep -qi "APPROVED"; then
-            tag_discussion "$num" "approved" || true
-            log "✅ Approved #$num"
-        else
-            tag_discussion "$num" "changes-requested" || true
-            log "🔄 Changes requested #$num"
-
-            # Write P1/P2 findings to todos/
-            local todos_dir="$TARGET_PROJECT/todos"
-            if [ -d "$todos_dir" ]; then
-                local todo_count next_num safe_title
-                todo_count=$(ls "$todos_dir"/*.md 2>/dev/null | wc -l | tr -d ' ')
-                next_num=$(printf "%03d" $((todo_count + 1)))
-                safe_title=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | head -c 40)
-
-                echo "$review_result" | python3 -c "
-import sys, os
-review = sys.stdin.read()
-todos_dir = '$todos_dir'
-num = int('$next_num')
-safe_title = '$safe_title'
-lines = review.split('\n')
-current_priority = None
-findings = []
-for line in lines:
-    if 'P1' in line and ('Must Fix' in line or 'CRITICAL' in line.upper()):
-        current_priority = 'p1'
-    elif 'P2' in line and ('Should Fix' in line or 'IMPORTANT' in line.upper()):
-        current_priority = 'p2'
-    elif 'P3' in line or '###' in line:
-        current_priority = None
-    elif current_priority and line.strip().startswith('- '):
-        findings.append((current_priority, line.strip()))
-for i, (priority, finding) in enumerate(findings):
-    todo_num = f'{num + i:03d}'
-    status = 'ready' if priority == 'p1' else 'pending'
-    fname = f'{todo_num}-{status}-{priority}-{safe_title}.md'
-    with open(os.path.join(todos_dir, fname), 'w') as f:
-        f.write(f'---\nstatus: {status}\npriority: {priority}\nsource: code-review\n---\n\n{finding}\n')
-" 2>/dev/null || true
-            fi
-        fi
-
-        mark_processed "$num" "$AGENT" "reviewed"
-    done
-}
-
-case "$MODE" in
-    review) run_review ;;
-    *)      echo "Usage: $0 {review}"; exit 1 ;;
-esac
+# Update state based on verdict
+if echo "$review_result" | grep -qi "APPROVED"; then
+    feature_set_status "$FEATURE_ID" "reviewed"
+    feature_set "$FEATURE_ID" "review_verdict" "approved"
+    [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
+        reply_to_discussion "$discussion" "🔎 **APPROVED.** Ready to merge." "$AGENT" 2>/dev/null || true
+    log "✅ Approved #$FEATURE_ID"
+else
+    local note
+    note=$(echo "$review_result" | grep -i "P1\|must fix\|CHANGES" | head -3 | tr '\n' ' ')
+    feature_add_feedback "$FEATURE_ID" "reviewer" "changes-requested" "$note"
+    [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
+        reply_to_discussion "$discussion" "🔄 **Changes requested.** See PR #$pr_num." "$AGENT" 2>/dev/null || true
+    log "🔄 Changes requested #$FEATURE_ID"
+fi

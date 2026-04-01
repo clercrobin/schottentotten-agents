@@ -1,12 +1,9 @@
 #!/bin/bash
 # ============================================================
-# 📋 Planner Agent — Compound Engineering: Plan phase
+# 📋 Planner Agent — Stateful version
 #
-# Researches the codebase, investigates patterns, and produces
-# a detailed implementation plan BEFORE any code is written.
-# Plans are posted to the Planning category for CTO approval.
-#
-# "Plans document decisions before they become bugs."
+# Receives feature ID. Reads state. Writes plan to disk.
+# On re-plan (CTO rejection), reads feedback and amends.
 # ============================================================
 set -uo pipefail
 
@@ -14,127 +11,62 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 _AGENT_MODE="${1:-}"
 set --
 source "$SCRIPT_DIR/../config-loader.sh"
-source "$SCRIPT_DIR/../lib/discussions.sh"
-source "$SCRIPT_DIR/../lib/lifecycle.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/../lib/state.sh"
 source "$SCRIPT_DIR/../lib/robust.sh"
+source "$SCRIPT_DIR/../lib/feature-state.sh"
+source "$SCRIPT_DIR/../lib/discussions.sh"
 
-MODE="${_AGENT_MODE:-plan}"
+FEATURE_ID="${_AGENT_MODE:-}"
 AGENT="planner"
-
 log() { echo "[$(date '+%H:%M:%S')] [PLAN] $*"; }
 
-# ────────────────────────────────────────────
-# plan — Pick up triaged issues, research, create implementation plan
-# ────────────────────────────────────────────
-run_plan() {
-    log "📋 Looking for issues to plan..."
+[ -z "$FEATURE_ID" ] && { log "No feature ID"; exit 1; }
 
-    # Query ALL open discussions with [TRIAGE] or [FEATURE] in title
-    # (Ideas from humans are in Ideas category, not Triage)
-    local all_triage
-    all_triage=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
-    query($owner: String!, $repo: String!) {
-      repository(owner: $owner, name: $repo) {
-        discussions(first: 20, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
-          nodes { number title body comments(first: 5) { nodes { body } } }
-        }
-      }
-    }' --jq '.data.repository.discussions.nodes' 2>/dev/null)
-    # Sanitize
-    all_triage=$(printf '%s' "$all_triage" | python3 -c "
-import sys, json
-raw = sys.stdin.read().translate({i: None for i in range(32) if i not in (9, 10, 13)})
-try:
-    print(json.dumps(json.loads(raw)))
-except:
-    print('[]')
-" 2>/dev/null || echo "[]")
+topic=$(feature_field "$FEATURE_ID" "topic")
+plan_file=$(feature_field "$FEATURE_ID" "plan")
+discussion=$(feature_field "$FEATURE_ID" "discussion")
 
-    local candidates
-    candidates=$(echo "$all_triage" | python3 -c "
-import sys, json, re
-priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
-try:
-    discussions = json.load(sys.stdin)
-    # Only pick up items in [TRIAGE] status — not [APPROVED], [BUILDING], etc.
-    discussions = [d for d in discussions if '[TRIAGE]' in d.get('title', '') or '[FEATURE]' in d.get('title', '')]
-    def get_priority(d):
-        m = re.search(r'\[(CRITICAL|HIGH|MEDIUM|LOW)\]', d.get('title', ''), re.IGNORECASE)
-        return priority_order.get(m.group(1).lower(), 9) if m else 9
-    discussions.sort(key=get_priority)
-    for d in discussions:
-        print(json.dumps(d))
-except (json.JSONDecodeError, KeyError):
-    pass
+log "📋 Planning #$FEATURE_ID: $topic"
+
+# Check for prior feedback
+feedback=""
+if [ -f "$plan_file" ]; then
+    feedback=$(python3 -c "
+import json
+with open('$_FEATURE_DIR/${FEATURE_ID}.json') as f:
+    d = json.load(f)
+for fb in d.get('feedback', []):
+    print(f\"- [{fb['verdict']}] {fb['note']}\")
 " 2>/dev/null)
+fi
 
-    if [ -z "$candidates" ]; then
-        log "No issues to plan."
-        return 0
-    fi
+if [ -n "$feedback" ]; then
+    log "  Iterating ($(echo "$feedback" | wc -l | tr -d ' ') feedback items)"
+    prompt_text="Amend this plan based on CTO feedback.
 
-    local task_json="" task_num=""
-    while IFS= read -r candidate; do
-        [ -z "$candidate" ] && continue
-        local cand_num
-        cand_num=$(echo "$candidate" | python3 -c "
-import sys, json
-try:
-    print(json.load(sys.stdin)['number'])
-except (KeyError, json.JSONDecodeError):
-    sys.exit(1)
-" 2>/dev/null) || continue
-        if true; then  # Title status [TRIAGE] is the gate, not processed.log
-            task_json="$candidate"
-            task_num="$cand_num"
-            break
-        fi
-    done <<< "$candidates"
+## Feature: $topic
 
-    if [ -z "$task_num" ]; then
-        log "No unplanned issues."
-        return 0
-    fi
+## Current Plan (first 200 lines):
+$(head -200 "$plan_file")
 
-    local task_title task_body
-    task_title=$(echo "$task_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])" 2>/dev/null) || return 1
-    task_body=$(echo "$task_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])" 2>/dev/null) || task_body="(no body)"
+## Feedback:
+$feedback
 
-    log "📋 Planning #$task_num: $task_title"
+Output the COMPLETE updated plan."
+else
+    log "  New plan"
+    prompt_text=$(load_prompt "planner-plan") || exit 1
+    prompt_text=$(render_prompt "$prompt_text" TASK_TITLE "$topic" TASK_BODY "$topic")
+fi
 
-    reply_to_discussion "$task_num" "📋 **Planning started.** Researching codebase and designing implementation approach." "$AGENT_PLANNER" || true
+result=$(safe_claude "$AGENT" "$prompt_text" --allowedTools "Bash,Read,Glob,Grep") || exit 1
 
-    local plan_prompt
-    plan_prompt=$(load_prompt "planner-plan") || { log "Cannot load planner-plan prompt"; return 1; }
-    plan_prompt=$(render_prompt "$plan_prompt" \
-        TASK_TITLE "$task_title" \
-        TASK_BODY "$task_body")
+echo "$result" > "$plan_file"
+log "  Written: $plan_file ($(wc -c < "$plan_file" | tr -d ' ')b)"
 
-    local plan_result
-    plan_result=$(safe_claude "$AGENT" "$plan_prompt" \
-    --allowedTools "Bash,Read,Glob,Grep") || {
-        log "⚠️  Planning failed"
-        reply_to_discussion "$task_num" "⚠️ Planning attempt failed. Will retry next cycle." "$AGENT_PLANNER" || true
-        return 1
-    }
+feature_set_status "$FEATURE_ID" "planning"
 
-    # Update the triage discussion — reply with plan + advance status
-    local topic
-    topic=$(extract_topic "$task_title")
-    advance_status "$task_num" "PLANNING" "$topic" \
-"## Implementation Plan
+[ -n "$discussion" ] && [ "$discussion" != "null" ] && \
+    reply_to_discussion "$discussion" "📋 **Plan ready.** Awaiting CTO approval." "$AGENT" 2>/dev/null || true
 
-$plan_result
-
----
-*Awaiting CTO approval before implementation begins.*" "$AGENT_PLANNER" || true
-
-    mark_processed "$task_num" "$AGENT" "planned"
-    log "✅ Plan added to #$task_num"
-}
-
-case "$MODE" in
-    plan) run_plan ;;
-    *)    echo "Usage: $0 {plan}"; exit 1 ;;
-esac
+log "✅ #$FEATURE_ID planned"
