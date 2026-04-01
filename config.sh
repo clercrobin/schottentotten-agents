@@ -1,0 +1,82 @@
+#!/bin/bash
+# ============================================================
+# schottentotten-agents — Fork of ai-agent-factory
+# Customized for the Schotten Totten project
+# ============================================================
+
+# GitHub repo where agents communicate via Discussions
+export GITHUB_OWNER="${GITHUB_OWNER:-clercrobin}"
+export GITHUB_REPO="${GITHUB_REPO:-schottentotten-agents}"
+export GITHUB_REPO_FULL="${GITHUB_OWNER}/${GITHUB_REPO}"
+
+# The target project agents work on
+export TARGET_PROJECT="${TARGET_PROJECT:-$HOME/Workspace/schottentotten}"
+
+# Agent polling interval (seconds) — tune based on your rate limits
+# With Claude Code Max, ~60s is safe to avoid hitting limits
+export POLL_INTERVAL="${POLL_INTERVAL:-30}"
+
+# Max parallel Claude sessions. Each slot = 1 Claude Code Max subscription.
+# With 1 sub: keep at 1 (agents take turns).
+# With 2-3 subs: set to 2-3 for true parallelism.
+export MAX_PARALLEL_SESSIONS="${MAX_PARALLEL_SESSIONS:-1}"
+
+# Base directory — always relative to this config.sh file
+_CONFIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Log and state directories (may be overridden by config-loader for projects)
+export LOG_DIR="${LOG_DIR:-$_CONFIG_DIR/logs}"
+export STATE_DIR="${STATE_DIR:-$_CONFIG_DIR/state}"
+mkdir -p "$LOG_DIR"
+
+# Discussion categories (created by setup.sh)
+export CAT_TRIAGE="${CAT_TRIAGE:-Triage}"
+export CAT_PLANNING="${CAT_PLANNING:-Planning}"
+export CAT_ENGINEERING="${CAT_ENGINEERING:-Engineering}"
+export CAT_CODE_REVIEW="${CAT_CODE_REVIEW:-Code Review}"
+export CAT_STANDUP="${CAT_STANDUP:-Daily Standup}"
+
+# Agent names (used in Discussion posts)
+export AGENT_CTO="${AGENT_CTO:-🎯 Agent CTO}"
+export AGENT_PLANNER="${AGENT_PLANNER:-📋 Agent Planner}"
+export AGENT_SENIOR_ENG="${AGENT_SENIOR_ENG:-👷 Agent Senior Engineer}"
+export AGENT_REVIEWER="${AGENT_REVIEWER:-🔎 Agent Code Reviewer}"
+export AGENT_TEST_RUNNER="${AGENT_TEST_RUNNER:-🧪 Agent Test Runner}"
+export AGENT_QA_WRITER="${AGENT_QA_WRITER:-🧪 Agent QA Writer}"
+export AGENT_COMPOUND="${AGENT_COMPOUND:-🔄 Agent Compound}"
+export AGENT_DOCS="${AGENT_DOCS:-📝 Agent Docs Writer}"
+export AGENT_DEP_AUDITOR="${AGENT_DEP_AUDITOR:-🔗 Agent Dependency Auditor}"
+export AGENT_RELEASE="${AGENT_RELEASE:-📦 Agent Release Manager}"
+export AGENT_A11Y="${AGENT_A11Y:-♿ Agent Accessibility Auditor}"
+export AGENT_DEVOPS="${AGENT_DEVOPS:-🔧 Agent DevOps}"
+export AGENT_SRE="${AGENT_SRE:-🚨 Agent SRE}"
+export AGENT_PM="${AGENT_PM:-📊 Agent Product Manager}"
+export AGENT_QUALITY_GATE="${AGENT_QUALITY_GATE:-🚦 Agent Quality Gate}"
+export AGENT_SELF_IMPROVE="${AGENT_SELF_IMPROVE:-🧬 Agent Self-Improve}"
+export AGENT_SECURITY="${AGENT_SECURITY:-🛡️ Agent Security}"
+
+# Human gate: category where agents post questions for the human
+export CAT_DECISIONS="${CAT_DECISIONS:-Q&A}"
+
+# Budget tracking — each Claude session costs compute time.
+# Track cumulative sessions per cycle to monitor cost.
+export MAX_SESSIONS_PER_CYCLE="${MAX_SESSIONS_PER_CYCLE:-25}"
+
+# ── Environment / deployment defaults ──────────────
+export ENV_NAME="${ENV_NAME:-staging}"
+export DEPLOY_BRANCH="${DEPLOY_BRANCH:-staging}"
+export DEPLOY_URL="${DEPLOY_URL:-http://schottentotten-staging.s3-website-eu-west-1.amazonaws.com}"
+export TF_DIR="${TF_DIR:-infra/terraform}"
+export TF_STATE_KEY="${TF_STATE_KEY:-}"
+export TF_VARS_FILE="${TF_VARS_FILE:-local.tfvars}"
+export IAM_ROLE_ARN="${IAM_ROLE_ARN:-}"
+export S3_BUCKET="${S3_BUCKET:-}"
+export CLOUDFRONT_ID="${CLOUDFRONT_ID:-}"
+
+# Claude Code settings
+export CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"  # Use sonnet for most tasks, opus for complex reviews
+# Budget per agent invocation (in USD). Claude Code Max doesn't consume API
+# credits, so this is mainly a safety rail to prevent runaway sessions.
+export CLAUDE_MAX_BUDGET="${CLAUDE_MAX_BUDGET:-5.00}"
+# Timeout per Claude invocation (seconds). Implementation tasks need more time.
+export CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-3600}"
