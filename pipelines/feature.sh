@@ -32,6 +32,7 @@ source "$SCRIPT_DIR/lib/state.sh"
 source "$SCRIPT_DIR/lib/robust.sh"
 source "$SCRIPT_DIR/lib/feature-state.sh"
 source "$SCRIPT_DIR/lib/discussions.sh"
+source "$SCRIPT_DIR/lib/sync-agents-repo.sh"
 
 ACTION="${_AGENT_MODE:-}"
 log() { echo "[$(date '+%H:%M:%S')] [FEAT] $*"; }
@@ -182,12 +183,22 @@ process_feature() {
             break
         fi
         log "  → $status → $new_status"
+        # Sync key transitions to agents repo
+        case "$new_status" in
+            planning)  sync_event "$fid" "📋" "Plan created" ;;
+            approved)  sync_event "$fid" "✅" "Plan approved — building next" ;;
+            review)    sync_event "$fid" "🔎" "PR created — reviewing" ;;
+            done)      sync_event "$fid" "✅" "Merged to staging — smoke tests pass" ;;
+        esac
     done
 
     local elapsed=$(( $(date +%s) - t0 ))
     local final
     final=$(feature_field "$fid" "status")
     log "═══ #$fid: $final in ${elapsed}s ($iter steps) ═══"
+
+    # Sync feature board to agents repo
+    sync_feature_board
 }
 
 # ────────────────────────────────────────────
