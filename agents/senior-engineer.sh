@@ -39,14 +39,17 @@ base_branch="${DEPLOY_BRANCH:-staging}"
 # Check if resuming
 git fetch origin 2>/dev/null || true
 if git rev-parse "origin/$local_branch" >/dev/null 2>&1; then
-    log "  Resuming on existing branch $local_branch"
+    log "  Resuming from remote $local_branch"
     git checkout "$local_branch" 2>/dev/null || git checkout -b "$local_branch" "origin/$local_branch"
     git pull --ff-only 2>/dev/null || true
+elif git rev-parse "$local_branch" >/dev/null 2>&1; then
+    log "  Resuming from local $local_branch"
+    git checkout "$local_branch" 2>/dev/null
 else
-    log "  Creating branch $local_branch from $base_branch"
+    log "  Creating $local_branch from $base_branch"
     git checkout "$base_branch" 2>/dev/null || true
     git pull origin "$base_branch" 2>/dev/null || true
-    git checkout -b "$local_branch" 2>/dev/null || { log "Cannot create branch"; exit 1; }
+    git checkout -b "$local_branch" || { log "Cannot create branch"; exit 1; }
 fi
 
 feature_set_status "$FEATURE_ID" "building"
