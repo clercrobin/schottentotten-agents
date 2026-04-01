@@ -112,39 +112,50 @@ process_feature() {
                 run_agent "reviewer.sh" "$fid"
                 ;;
             reviewed)
-                # Merge PR to staging
-                local pr_num target_repo
+                # Merge PR to staging → deploy → smoke test → iterate if failing
+                local pr_num target_repo staging_branch
                 pr_num=$(feature_field "$fid" "pr")
                 target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
+                staging_branch="${DEPLOY_BRANCH:-staging}"
 
-                if [ -n "$pr_num" ] && [ "$pr_num" != "None" ]; then
-                    log "  🔀 Merging PR #$pr_num to staging"
-                    if gh pr merge "$pr_num" --repo "$target_repo" --squash --delete-branch 2>/dev/null; then
-                        log "  ✅ Merged to staging"
-
-                        # Smoke test
-                        if run_smoke_test; then
-                            feature_set_status "$fid" "done"
-                            local discussion
-                            discussion=$(feature_field "$fid" "discussion")
-                            [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
-                                reply_to_discussion "$discussion" "✅ **Merged to staging. Smoke tests pass.**" "🔧 Feature Pipeline" 2>/dev/null || true
-                        else
-                            # Smoke failed — create fix context and send back to building
-                            log "  🔄 Smoke test failed — engineer will fix"
-                            local ci_log
-                            ci_log=$(gh run list --repo "$target_repo" --branch "${DEPLOY_BRANCH:-staging}" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null)
-                            local error_context
-                            error_context=$(gh run view "$ci_log" --repo "$target_repo" --log-failed 2>/dev/null | tail -20)
-                            feature_add_feedback "$fid" "smoke-test" "failing" "Staging smoke test failed after merge. Error: $error_context"
-                            feature_set_status "$fid" "building"
-                        fi
-                    else
-                        log "  ⚠️ Merge failed"
-                    fi
-                else
-                    log "  ⚠️ No PR"
+                if [ -z "$pr_num" ] || [ "$pr_num" = "None" ]; then
+                    log "  ⚠️ No PR — cannot merge"
                     break
+                fi
+
+                log "  🔀 Merging PR #$pr_num to $staging_branch"
+                if ! gh pr merge "$pr_num" --repo "$target_repo" --squash --delete-branch 2>/dev/null; then
+                    log "  ⚠️ Merge failed"
+                    break
+                fi
+                log "  ✅ Merged to $staging_branch"
+
+                # Wait for CI to deploy staging and run smoke tests
+                log "  🧪 Waiting for staging deploy + smoke tests..."
+                if run_smoke_test; then
+                    feature_set_status "$fid" "done"
+                    local discussion
+                    discussion=$(feature_field "$fid" "discussion")
+                    [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
+                        reply_to_discussion "$discussion" \
+                        "✅ **Merged to $staging_branch. CI + smoke tests pass.**" \
+                        "🔧 Feature Pipeline" 2>/dev/null || true
+                    log "  ✅ Staging green — feature complete"
+                else
+                    # Smoke failed — get error, send back to engineer
+                    log "  🔄 Smoke test FAILED — sending back to engineer"
+                    local run_id error_context
+                    run_id=$(gh run list --repo "$target_repo" --branch "$staging_branch" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null)
+                    error_context=$(gh run view "$run_id" --repo "$target_repo" --log-failed 2>/dev/null | tail -25)
+
+                    feature_add_feedback "$fid" "smoke-test" "failing" \
+                        "Staging smoke test failed after merge to $staging_branch. CI run: $run_id. Error: $(echo "$error_context" | head -10 | tr '\n' ' ')"
+
+                    # Engineer needs to fix ON the staging branch directly
+                    # (PR was already merged, so new fix goes as a new commit)
+                    feature_set "$fid" "branch" "$staging_branch"
+                    feature_set_status "$fid" "building"
+                    log "  → Status back to building — engineer will fix and push to $staging_branch"
                 fi
                 ;;
             done)

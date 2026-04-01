@@ -84,28 +84,39 @@ elif cmd == "add-feedback":
         d["feedback"].append({"by": by, "at": now(), "verdict": verdict, "note": note})
         save(fid, d)
 
-elif cmd == "find-by-status":
-    statuses = set(sys.argv[2:])
-    # Pick most advanced first (finish what's started), then by priority
-    status_advancement = {
+elif cmd == "find-next":
+    # Picks the feature closest to done, then by criticality when tied
+    # "advancement" = how far along the pipeline (finish started work first)
+    # "criticality" = business importance (critical > high > medium > low)
+    statuses = set(sys.argv[2:]) if len(sys.argv) > 2 else {
+        "triage", "planning", "approved", "building", "review", "reviewed"
+    }
+    advancement = {
         "reviewed": 0, "review": 1, "building": 2,
         "approved": 3, "planning": 4, "triage": 5
     }
-    priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    criticality = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
-    best, best_adv, best_pri = None, 99, 99
+    best, best_score = None, (99, 99)
     for f in glob.glob(os.path.join(FEATURE_DIR, "*.json")):
         try:
             with open(f) as fh:
                 d = json.load(fh)
             if d.get("status") in statuses:
-                adv = status_advancement.get(d.get("status"), 9)
-                pri = priority_order.get(d.get("priority", "low"), 9)
-                if (adv, pri) < (best_adv, best_pri):
-                    best, best_adv, best_pri = d["id"], adv, pri
+                score = (
+                    advancement.get(d.get("status"), 9),
+                    criticality.get(d.get("priority", "low"), 9)
+                )
+                if score < best_score:
+                    best, best_score = d["id"], score
         except: pass
     if best:
         print(best)
+
+# Keep old name as alias
+elif cmd == "find-by-status":
+    # Delegate to find-next with explicit statuses
+    os.execv(sys.executable, [sys.executable, __file__, "find-next"] + sys.argv[2:])
 
 elif cmd == "count":
     status = os.environ.get("STATUS", "")

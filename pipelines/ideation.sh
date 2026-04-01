@@ -53,7 +53,14 @@ run_intake() {
 }
 
 run_scan() {
-    log "🔍 Scanning codebase for improvements..."
+    log "🔍 Scanning codebase on ${DEPLOY_BRANCH:-staging} branch..."
+    # Ensure we scan the staging branch (latest code, not prod)
+    cd "$TARGET_PROJECT"
+    git fetch origin 2>/dev/null || true
+    git checkout "${DEPLOY_BRANCH:-staging}" 2>/dev/null || true
+    git pull 2>/dev/null || true
+    cd "$SCRIPT_DIR"
+
     run_agent "cto.sh" "scan"
     run_agent "security.sh" "scan"
 }

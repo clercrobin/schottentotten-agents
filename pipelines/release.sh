@@ -25,16 +25,20 @@ source "$SCRIPT_DIR/lib/discussions.sh"
 ACTION="${_AGENT_MODE:-}"
 log() { echo "[$(date '+%H:%M:%S')] [REL] $*"; }
 
+# Release always goes from DEPLOY_BRANCH (staging) → main
 check_release() {
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
-    local staging_branch="${DEPLOY_BRANCH:-staging}"
+    local from_branch="${DEPLOY_BRANCH:-staging}"
+    local to_branch="main"
+
+    log "Checking: $from_branch → $to_branch"
 
     cd "$TARGET_PROJECT"
     git fetch origin 2>/dev/null || true
 
     # Ahead count
     local ahead
-    ahead=$(git rev-list --count "origin/main..origin/$staging_branch" 2>/dev/null || echo "0")
+    ahead=$(git rev-list --count "origin/main..origin/$from_branch" 2>/dev/null || echo "0")
 
     if [ "$ahead" -eq 0 ]; then
         log "Staging = main. Nothing to release."
@@ -45,7 +49,7 @@ check_release() {
 
     # CI status
     local ci_status
-    ci_status=$(gh run list --repo "$target_repo" --branch "$staging_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+    ci_status=$(gh run list --repo "$target_repo" --branch "$from_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
 
     if [ "$ci_status" != "success" ]; then
         log "CI: $ci_status — not ready"
@@ -70,8 +74,8 @@ check_release() {
 
     # Build changelog
     local changelog staging_sha
-    changelog=$(git log --oneline "origin/main..origin/$staging_branch" --no-merges 2>/dev/null | head -20)
-    staging_sha=$(git rev-parse --short "origin/$staging_branch" 2>/dev/null)
+    changelog=$(git log --oneline "origin/main..origin/$from_branch" --no-merges 2>/dev/null | head -20)
+    staging_sha=$(git rev-parse --short "origin/$from_branch" 2>/dev/null)
 
     local features
     features=$(feature_list 2>/dev/null | grep -E "done|reviewed" || echo "(none)")
