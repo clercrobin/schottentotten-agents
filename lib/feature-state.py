@@ -30,13 +30,15 @@ if cmd == "create":
     priority = os.environ.get("PRIORITY", "medium")
     discussion = os.environ.get("DISCUSSION", "")
     slug = "".join(c if c.isalnum() or c == "-" else "-" for c in topic.lower())[:40].strip("-")
+    plans_dir = os.path.abspath(PLANS_DIR)
+    os.makedirs(plans_dir, exist_ok=True)
     data = {
         "id": fid,
         "topic": topic,
         "status": "triage",
         "priority": priority,
         "discussion": int(discussion) if discussion.isdigit() else None,
-        "plan": f"{PLANS_DIR}/{fid}-{slug}.md",
+        "plan": f"{plans_dir}/{fid}-{slug}.md",
         "branch": None,
         "pr": None,
         "created": now(),
