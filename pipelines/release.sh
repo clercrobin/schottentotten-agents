@@ -88,13 +88,41 @@ check_release() {
             .number] | first' 2>/dev/null || echo "")
 
         if [ -n "$approved" ]; then
-            log "🚀 Human approved — merging $from_branch → $to_branch"
+            log "🚀 Human approved — creating release PR $from_branch → $to_branch"
+
+            # Build changelog for PR body
             cd "$TARGET_PROJECT"
-            git checkout "$to_branch" 2>/dev/null || true
-            git pull origin "$to_branch" 2>/dev/null || true
-            if git merge "origin/$from_branch" --no-edit -m "release: approved in Q&A #$approved" 2>/dev/null; then
-                git push origin "$to_branch" 2>&1 | tail -1
-                reply_to_discussion "$approved" "✅ **Shipped to prod.** $from_branch merged to $to_branch." "📦 Release Pipeline" 2>/dev/null || true
+            git fetch origin 2>/dev/null || true
+            local pr_changelog
+            pr_changelog=$(git log --oneline "origin/$to_branch..origin/$from_branch" --no-merges 2>/dev/null | head -20)
+            local pr_features
+            pr_features=$(feature_list 2>/dev/null | grep -E "done|reviewed" || echo "(none)")
+
+            # Create and merge a PR (visible in GitHub interface)
+            local release_pr
+            release_pr=$(gh pr create --repo "$target_repo" \
+                --title "Release: $from_branch → $to_branch (Q&A #$approved)" \
+                --body "## Release approved in Q&A #$approved
+
+### Features
+\`\`\`
+$pr_features
+\`\`\`
+
+### Commits
+\`\`\`
+$pr_changelog
+\`\`\`" \
+                --base "$to_branch" \
+                --head "$from_branch" 2>&1 | grep -oE 'https://[^ ]+' | tail -1) || release_pr=""
+
+            if [ -n "$release_pr" ]; then
+                log "  📋 Release PR: $release_pr"
+                # Merge the PR
+                local pr_num
+                pr_num=$(echo "$release_pr" | grep -oE '[0-9]+$')
+                if gh pr merge "$pr_num" --repo "$target_repo" --merge 2>/dev/null; then
+                    reply_to_discussion "$approved" "✅ **Shipped to prod.** Release PR: $release_pr" "📦 Release Pipeline" 2>/dev/null || true
                 # Close the Q&A
                 local disc_id
                 disc_id=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -F num="$approved" -f query='query($owner: String!, $repo: String!, $num: Int!) { repository(owner: $owner, name: $repo) { discussion(number: $num) { id } } }' --jq '.data.repository.discussion.id' 2>/dev/null)
@@ -133,11 +161,13 @@ check_release() {
                 fi
 
                 log "✅ Released and Q&A closed"
+                else
+                    log "  ⚠️ PR merge failed"
+                    reply_to_discussion "$approved" "⚠️ **Release PR created but merge failed.** PR: $release_pr" "📦 Release Pipeline" 2>/dev/null || true
+                fi
             else
-                git merge --abort 2>/dev/null || true
-                log "⚠️ Merge conflict — cannot release"
+                log "  ⚠️ Could not create release PR"
             fi
-            git checkout "$from_branch" 2>/dev/null || true
         else
             log "Approval pending — waiting for human"
         fi
