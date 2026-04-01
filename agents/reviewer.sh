@@ -63,7 +63,8 @@ else
     note=""
     note=$(echo "$review_result" | grep -i "P1\|must fix\|CHANGES" | head -3 | tr '\n' ' ')
     feature_add_feedback "$FEATURE_ID" "reviewer" "changes-requested" "$note"
+    feature_set_status "$FEATURE_ID" "building"  # send back to engineer
     [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
-        reply_to_discussion "$discussion" "🔄 **Changes requested.** See PR #$pr_num." "$AGENT" 2>/dev/null || true
-    log "🔄 Changes requested #$FEATURE_ID"
+        reply_to_discussion "$discussion" "🔄 **Changes requested.** Engineer will fix." "$AGENT" 2>/dev/null || true
+    log "🔄 Changes requested #$FEATURE_ID → back to building"
 fi
