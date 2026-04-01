@@ -103,11 +103,30 @@ feature_set_status "$FEATURE_ID" "building"
 feature_set "$FEATURE_ID" "branch" "$local_branch"
 _ORIG_TARGET_PROJECT="$TARGET_PROJECT"
 
-# Dynamic context — engineer agent definition provides system prompt
+# Build prompt — include feedback if rebuilding after failure
+feedback=""
+if [ "$status" = "building" ]; then
+    feedback=$(python3 -c "
+import json, os
+d = json.load(open(os.path.join('${_FEATURE_DIR}', '${FEATURE_ID}.json')))
+for fb in d.get('feedback', []):
+    print(f\"- [{fb['by']}] {fb['verdict']}: {fb['note']}\")
+" 2>/dev/null)
+fi
+
 impl_prompt="## $topic
 
 ## Implementation Plan
 $plan_content"
+
+if [ -n "$feedback" ]; then
+    impl_prompt="$impl_prompt
+
+## IMPORTANT: Feedback from previous build (FIX THESE ISSUES)
+$feedback
+
+Focus on fixing the issues above. The plan may already be partially implemented — only make the changes needed to address the feedback."
+fi
 
 # Run Claude in the work directory (worktree or main checkout)
 TARGET_PROJECT="$work_dir" result=$(safe_claude "engineer" "$impl_prompt") || {
