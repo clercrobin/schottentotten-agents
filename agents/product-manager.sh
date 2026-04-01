@@ -27,9 +27,32 @@ run_intake() {
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
 
     # GitHub Issues
+    # GitHub Issues on the target project (schottentotten)
+    local issues
+    issues=$(gh issue list --repo "$target_repo" --state open --json number,title,labels --limit 10 2>/dev/null || echo "[]")
     local issue_count
-    issue_count=$(gh issue list --repo "$target_repo" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+    issue_count=$(echo "$issues" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
     log "  Issues: $issue_count"
+
+    # Create features from issues
+    echo "$issues" | python3 -c "
+import sys, json
+for i in json.load(sys.stdin):
+    labels = [l['name'] for l in i.get('labels', [])]
+    crit = 'critical' if 'bug' in labels else 'high' if 'enhancement' in labels else 'medium'
+    print(f\"{i['number']}\t{i['title']}\t{crit}\")
+" 2>/dev/null | while IFS=$'\t' read -r inum ititle icrit; do
+        [ -z "$inum" ] && continue
+        # Use "i-" prefix to avoid ID collision with Discussion numbers
+        local fid="i-${inum}"
+        [ -f "$_FEATURE_DIR/${fid}.json" ] && continue
+
+        log "  New issue: #$inum $ititle ($icrit)"
+        feature_create "$fid" "$ititle" "$icrit"
+        # Comment on the issue to confirm tracking
+        gh issue comment "$inum" --repo "$target_repo" --body "📊 **Tracked by Agent Factory.** Agents will plan and implement this." 2>/dev/null || true
+        log "  ✅ Feature $fid created from issue #$inum"
+    done
 
     # Discussion Ideas (no env filter — human posts)
     local ideas
