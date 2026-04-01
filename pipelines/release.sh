@@ -99,6 +99,39 @@ check_release() {
                 local disc_id
                 disc_id=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -F num="$approved" -f query='query($owner: String!, $repo: String!, $num: Int!) { repository(owner: $owner, name: $repo) { discussion(number: $num) { id } } }' --jq '.data.repository.discussion.id' 2>/dev/null)
                 [ -n "$disc_id" ] && gh api graphql -f id="$disc_id" -f query='mutation($id: ID!) { closeDiscussion(input: { discussionId: $id, reason: RESOLVED }) { discussion { number } } }' 2>/dev/null || true
+                # Wait for prod CI + verify health
+                log "  ⏳ Waiting for prod deploy..."
+                local prod_ok=false
+                for i in $(seq 1 20); do
+                    sleep 15
+                    local prod_ci
+                    prod_ci=$(gh run list --repo "$target_repo" --branch "$to_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+                    if [ "$prod_ci" = "success" ]; then
+                        prod_ok=true
+                        break
+                    elif [ "$prod_ci" = "failure" ]; then
+                        log "  ❌ Prod CI FAILED"
+                        reply_to_discussion "$approved" "❌ **Prod CI failed after merge.** Investigate immediately." "📦 Release Pipeline" 2>/dev/null || true
+                        break
+                    fi
+                    log "  ⏳ Prod CI: $prod_ci ($i/20)"
+                done
+
+                if [ "$prod_ok" = true ]; then
+                    # Health check prod URL
+                    local prod_url="https://$(basename "$TARGET_PROJECT").com"
+                    # Try known prod URLs
+                    for url in "$prod_url" "https://schottentotten.com"; do
+                        local http_code
+                        http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$url" 2>/dev/null || echo "000")
+                        if [ "$http_code" = "200" ] || [ "$http_code" = "301" ]; then
+                            log "  ✅ Prod healthy: $url → HTTP $http_code"
+                            reply_to_discussion "$approved" "✅ **Prod verified.** CI passed, $url → HTTP $http_code" "📦 Release Pipeline" 2>/dev/null || true
+                            break
+                        fi
+                    done
+                fi
+
                 log "✅ Released and Q&A closed"
             else
                 git merge --abort 2>/dev/null || true
