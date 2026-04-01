@@ -30,6 +30,11 @@ log "👷 Building #$FEATURE_ID: $topic (status=$status)"
 
 [ ! -f "$plan_file" ] && { log "No plan file: $plan_file"; exit 1; }
 
+# Read plan from disk BEFORE cd to target project
+plan_content=$(cat "$SCRIPT_DIR/../$plan_file" 2>/dev/null || cat "$plan_file" 2>/dev/null || echo "")
+[ -z "$plan_content" ] && { log "⚠️ Empty plan file: $plan_file"; exit 1; }
+log "  Plan: ${#plan_content} chars"
+
 cd "$TARGET_PROJECT"
 
 # Branch name from feature ID
@@ -55,8 +60,7 @@ fi
 feature_set_status "$FEATURE_ID" "building"
 feature_set "$FEATURE_ID" "branch" "$local_branch"
 
-# Read plan from disk and implement
-plan_content=$(cat "$plan_file")
+# Plan already loaded before cd
 impl_prompt=$(load_prompt "engineer-implement") || exit 1
 impl_prompt=$(render_prompt "$impl_prompt" \
     TASK_TITLE "$topic" \
