@@ -61,6 +61,7 @@ fi
 
 result=$(safe_claude "$AGENT" "$prompt_text" --allowedTools "Bash,Read,Glob,Grep") || exit 1
 
+mkdir -p "$(dirname "$plan_file")"
 echo "$result" > "$plan_file"
 log "  Written: $plan_file ($(wc -c < "$plan_file" | tr -d ' ')b)"
 
