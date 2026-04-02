@@ -284,8 +284,17 @@ print('yes' if d.get('feedback') else 'no')
 # ────────────────────────────────────────────
 # Main
 # ────────────────────────────────────────────
+# Check for human feedback on discussions before processing
+check_human_feedback() {
+    log "💬 Checking for human feedback..."
+    PROJECT_NAME="$PROJECT_NAME" ENV_NAME="$ENV_NAME" \
+        bash "$SCRIPT_DIR/agents/product-manager.sh" check-feedback 2>&1 | \
+        tee -a "${LOG_DIR:-logs}/feature.log"
+}
+
 case "$ACTION" in
     --next)
+        check_human_feedback
         fid=$(feature_find_by_status "triage" "planning" "approved" "building" "review" "reviewed")
         if [ -n "$fid" ]; then
             process_feature "$fid"
@@ -297,6 +306,7 @@ case "$ACTION" in
         log "🔁 Feature pipeline loop"
         trap 'log "🛑 Stopping"; pkill -P $$ 2>/dev/null; exit 0' INT TERM
         while true; do
+            check_human_feedback
             fid=$(feature_find_by_status "triage" "planning" "approved" "building" "review" "reviewed")
             if [ -n "$fid" ]; then
                 process_feature "$fid"
