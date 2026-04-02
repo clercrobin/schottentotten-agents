@@ -202,6 +202,26 @@ safe_claude() {
         agent_system_prompt=$(awk 'BEGIN{n=0} /^---$/{n++; next} n>=2{print}' "$agent_def_file")
         # Extract allowedTools from frontmatter
         agent_allowed_tools=$(awk '/^---$/,/^---$/' "$agent_def_file" | grep '^allowedTools:' | sed 's/^allowedTools: *//')
+
+        # Inject project-specific rules and style (written by self-improve agent)
+        if [ -n "${PROJECT_DIR:-}" ]; then
+            local rules_file="$PROJECT_DIR/rules.md"
+            local style_file="$PROJECT_DIR/style.md"
+            if [ -f "$rules_file" ]; then
+                agent_system_prompt="$agent_system_prompt
+
+---
+## Project Rules (auto-learned — MUST follow)
+$(cat "$rules_file")"
+            fi
+            if [ -f "$style_file" ]; then
+                agent_system_prompt="$agent_system_prompt
+
+## Project Style (auto-learned — follow conventions)
+$(cat "$style_file")"
+            fi
+        fi
+
         if [ -n "$agent_system_prompt" ]; then
             use_agent_mode=true
         fi
