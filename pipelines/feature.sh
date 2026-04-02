@@ -33,6 +33,7 @@ source "$SCRIPT_DIR/lib/robust.sh"
 source "$SCRIPT_DIR/lib/feature-state.sh"
 source "$SCRIPT_DIR/lib/discussions.sh"
 source "$SCRIPT_DIR/lib/sync-agents-repo.sh"
+source "$SCRIPT_DIR/lib/ensure-claude-md.sh"
 
 ACTION="${_AGENT_MODE:-}"
 log() { echo "[$(date '+%H:%M:%S')] [FEAT] $*"; }
@@ -92,6 +93,9 @@ process_feature() {
     t0=$(date +%s)
     max_iter=20
     iter=0
+
+    # Ensure target project has a CLAUDE.md (auto-generates if missing)
+    ensure_claude_md
 
     log "═══ Feature #$fid ═══"
 
