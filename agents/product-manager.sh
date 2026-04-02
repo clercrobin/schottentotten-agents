@@ -127,8 +127,127 @@ except: pass
     done
 }
 
+# ────────────────────────────────────────────
+# check-feedback — Scan feature discussions for new human comments
+#
+# For each active feature with a discussion, check if the human
+# posted a reply AFTER the last agent reply. If so, treat it as
+# feedback and reset the feature to triage for re-iteration.
+# ────────────────────────────────────────────
+run_check_feedback() {
+    log "📊 Checking for human feedback on features..."
+
+    local agents_repo="${GITHUB_OWNER}/${GITHUB_REPO}"
+
+    # Iterate over all feature state files
+    for f in "$_FEATURE_DIR"/*.json; do
+        [ -e "$f" ] || continue
+
+        local fid status disc_num last_feedback_ts
+        fid=$(python3 -c "import json; d=json.load(open('$f')); print(d['id'])")
+        status=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('status',''))")
+        disc_num=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('discussion') or '')")
+
+        # Skip features without discussions, or already done/triage
+        [ -z "$disc_num" ] || [ "$disc_num" = "None" ] && continue
+        [ "$status" = "done" ] || [ "$status" = "triage" ] && continue
+
+        # Get last feedback timestamp from state (to avoid re-processing)
+        last_feedback_ts=$(python3 -c "
+import json
+d = json.load(open('$f'))
+fbs = [fb['at'] for fb in d.get('feedback', []) if fb.get('by') == 'human']
+print(fbs[-1] if fbs else '')
+" 2>/dev/null)
+
+        # Fetch discussion comments
+        local human_comment
+        human_comment=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -F num="$disc_num" -f query='
+        query($owner: String!, $repo: String!, $num: Int!) {
+          repository(owner: $owner, name: $repo) {
+            discussion(number: $num) {
+              comments(last: 10) {
+                nodes { body createdAt author { login } }
+              }
+            }
+          }
+        }' --jq '.data.repository.discussion.comments.nodes' 2>/dev/null || echo "[]")
+
+        # Find human comments that are newer than last processed feedback
+        local new_feedback
+        new_feedback=$(printf '%s' "$human_comment" | python3 -c "
+import sys, json
+from datetime import datetime, timezone
+
+last_ts = '$last_feedback_ts'
+comments = json.loads(sys.stdin.read())
+
+for c in comments:
+    # Skip agent comments (they contain Agent markers)
+    body = c.get('body', '')
+    if any(marker in body[:50] for marker in ['[🤖', '[engineer]', '[reviewer]', '[planner]', 'Agent', '📋 **', '👷 **', '🔎 **', '✅ **', '📊 **']):
+        continue
+
+    # Skip if older than last processed feedback
+    if last_ts and c['createdAt'] <= last_ts:
+        continue
+
+    # This is new human feedback
+    # Clean up the body (first 300 chars)
+    note = body.strip()[:300]
+    print(json.dumps({'ts': c['createdAt'], 'note': note}))
+" 2>/dev/null)
+
+        [ -z "$new_feedback" ] && continue
+
+        # Process each new human comment as feedback
+        echo "$new_feedback" | while IFS= read -r fb_json; do
+            [ -z "$fb_json" ] && continue
+
+            local fb_note fb_ts
+            fb_note=$(echo "$fb_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['note'])")
+            fb_ts=$(echo "$fb_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['ts'])")
+
+            log "  💬 #$fid: Human feedback on Discussion #$disc_num"
+            log "     $fb_note"
+
+            # Add feedback to state
+            feature_add_feedback "$fid" "human" "reject" "$fb_note"
+
+            # Clean up: close stale PR, delete branch/worktree
+            local old_pr old_branch target_repo
+            old_pr=$(feature_field "$fid" "pr")
+            old_branch=$(feature_field "$fid" "branch")
+            target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
+
+            [ -n "$old_pr" ] && [ "$old_pr" != "None" ] && \
+                gh pr close "$old_pr" --repo "$target_repo" --delete-branch 2>/dev/null || true
+            [ -n "$old_branch" ] && [ "$old_branch" != "None" ] && [ "$old_branch" != "staging" ] && {
+                cd "$TARGET_PROJECT"
+                local wt_dir="/tmp/agent-wt-${fid}"
+                [ -d "$wt_dir" ] && git worktree remove "$wt_dir" --force 2>/dev/null || true
+                git branch -D "$old_branch" 2>/dev/null || true
+                git push origin --delete "$old_branch" 2>/dev/null || true
+            }
+
+            # Reset state for re-iteration
+            feature_set "$fid" "branch" ""
+            feature_set "$fid" "pr" ""
+            feature_set_status "$fid" "triage"
+
+            # Acknowledge on the discussion
+            reply_to_discussion "$disc_num" \
+                "📊 **Feedback received.** Resetting feature for re-iteration." \
+                "$AGENT_PM" 2>/dev/null || true
+
+            log "  ✅ #$fid reset to triage"
+        done
+    done
+}
+
 case "$MODE" in
     intake)          run_intake ;;
     check-decisions) run_check_decisions ;;
-    *)               echo "Usage: $0 {intake|check-decisions}"; exit 1 ;;
+    check-feedback)  run_check_feedback ;;
+    *)               echo "Usage: $0 {intake|check-decisions|check-feedback}"; exit 1 ;;
 esac

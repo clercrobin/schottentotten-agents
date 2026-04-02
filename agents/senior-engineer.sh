@@ -35,76 +35,143 @@ plan_content=$(cat "$plan_file" 2>/dev/null || echo "")
 [ -z "$plan_content" ] && { log "⚠️ Empty plan file: $plan_file"; exit 1; }
 log "  Plan: ${#plan_content} chars"
 
-cd "$TARGET_PROJECT"
-
 # Branch name from feature ID
 local_branch="agent/${FEATURE_ID}-$(echo "$topic" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | head -c 30)"
 base_branch="${DEPLOY_BRANCH:-staging}"
+use_worktree="${USE_WORKTREE:-true}"
+work_dir=""
+# Check if state has a branch — empty means pipeline reset (fresh build needed)
+state_branch=$(feature_field "$FEATURE_ID" "branch")
+fresh_build=false
+[ -z "$state_branch" ] || [ "$state_branch" = "null" ] || [ "$state_branch" = "None" ] && fresh_build=true
 
-# Check if resuming
+cd "$TARGET_PROJECT"
 git fetch origin 2>/dev/null || true
-if git rev-parse "origin/$local_branch" >/dev/null 2>&1; then
-    log "  Resuming from remote $local_branch"
-    git checkout "$local_branch" 2>/dev/null || git checkout -b "$local_branch" "origin/$local_branch"
-    git pull --ff-only 2>/dev/null || true
-elif git rev-parse "$local_branch" >/dev/null 2>&1; then
-    log "  Resuming from local $local_branch"
-    git checkout "$local_branch" 2>/dev/null
+
+# ── Set up working directory (worktree or branch checkout) ──
+if [ "$use_worktree" = "true" ]; then
+    # Worktree: isolated copy — enables parallel features without branch conflicts
+    work_dir="/tmp/agent-wt-${FEATURE_ID}"
+
+    # Fresh build: clean any stale worktree + local/remote branch from previous iteration
+    if [ "$fresh_build" = true ]; then
+        [ -d "$work_dir" ] && {
+            log "  Cleaning stale worktree for fresh build"
+            git worktree remove "$work_dir" --force 2>/dev/null || rm -rf "$work_dir"
+        }
+        git branch -D "$local_branch" 2>/dev/null || true
+        git push origin --delete "$local_branch" 2>/dev/null || true
+    fi
+
+    if [ -d "$work_dir" ]; then
+        log "  Resuming worktree $work_dir"
+        cd "$work_dir"
+        git pull --ff-only 2>/dev/null || true
+    elif [ "$fresh_build" != true ] && git rev-parse "origin/$local_branch" >/dev/null 2>&1; then
+        log "  Worktree from remote $local_branch"
+        git worktree add "$work_dir" "origin/$local_branch" 2>/dev/null || \
+            git worktree add -b "$local_branch" "$work_dir" "origin/$local_branch"
+        cd "$work_dir"
+        git checkout -B "$local_branch" "origin/$local_branch" 2>/dev/null || true
+    else
+        log "  New worktree $local_branch from $base_branch"
+        git branch -D "$local_branch" 2>/dev/null || true
+        git worktree add -b "$local_branch" "$work_dir" "origin/$base_branch" 2>/dev/null || {
+            log "Cannot create worktree"; exit 1
+        }
+        cd "$work_dir"
+    fi
 else
-    log "  Creating $local_branch from $base_branch"
-    git checkout "$base_branch" 2>/dev/null || true
-    git pull origin "$base_branch" 2>/dev/null || true
-    git checkout -b "$local_branch" || { log "Cannot create branch"; exit 1; }
+    # Legacy: checkout branch in main working copy
+    work_dir="$TARGET_PROJECT"
+    if git rev-parse "origin/$local_branch" >/dev/null 2>&1; then
+        log "  Resuming from remote $local_branch"
+        git checkout "$local_branch" 2>/dev/null || git checkout -b "$local_branch" "origin/$local_branch"
+        git pull --ff-only 2>/dev/null || true
+    elif git rev-parse "$local_branch" >/dev/null 2>&1; then
+        log "  Resuming from local $local_branch"
+        git checkout "$local_branch" 2>/dev/null
+    else
+        log "  Creating $local_branch from $base_branch"
+        git checkout "$base_branch" 2>/dev/null || true
+        git pull origin "$base_branch" 2>/dev/null || true
+        git checkout -b "$local_branch" || { log "Cannot create branch"; exit 1; }
+    fi
 fi
 
 feature_set_status "$FEATURE_ID" "building"
 feature_set "$FEATURE_ID" "branch" "$local_branch"
+_ORIG_TARGET_PROJECT="$TARGET_PROJECT"
 
-# Plan already loaded before cd
-impl_prompt=$(load_prompt "engineer-implement") || exit 1
-impl_prompt=$(render_prompt "$impl_prompt" \
-    TASK_TITLE "$topic" \
-    TASK_BODY "$plan_content" \
-    RESUME_CONTEXT "")
+# Build prompt — include feedback if rebuilding after failure
+feedback=""
+if [ "$status" = "building" ]; then
+    feedback=$(python3 -c "
+import json, os
+d = json.load(open(os.path.join('${_FEATURE_DIR}', '${FEATURE_ID}.json')))
+for fb in d.get('feedback', []):
+    print(f\"- [{fb['by']}] {fb['verdict']}: {fb['note']}\")
+" 2>/dev/null)
+fi
 
-result=$(safe_claude "$AGENT" "$impl_prompt" \
---allowedTools "Bash,Read,Write,Edit,Glob,Grep") || {
+impl_prompt="## $topic
+
+## Implementation Plan
+$plan_content"
+
+if [ -n "$feedback" ]; then
+    impl_prompt="$impl_prompt
+
+## IMPORTANT: Feedback from previous build (FIX THESE ISSUES)
+$feedback
+
+Focus on fixing the issues above. The plan may already be partially implemented — only make the changes needed to address the feedback."
+fi
+
+# Run Claude in the work directory (worktree or main checkout)
+TARGET_PROJECT="$work_dir" result=$(safe_claude "engineer" "$impl_prompt") || {
     log "⚠️ Implementation failed"
     # Save partial work
-    cd "$TARGET_PROJECT"
+    cd "$work_dir"
     if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-        git add -A
+        git add -u
+        git ls-files --others --exclude-standard | grep -v 'node_modules' | xargs -r git add
         git commit -m "wip: partial #$FEATURE_ID" 2>/dev/null || true
         git push -u origin "$local_branch" 2>/dev/null || true
     fi
-    git checkout "$base_branch" 2>/dev/null || true
+    [ "$use_worktree" != "true" ] && git checkout "$base_branch" 2>/dev/null || true
     exit 1
 }
 
 # Commit and push
-cd "$TARGET_PROJECT"
+cd "$work_dir"
 if git diff --cached --quiet && git diff --quiet; then
     log "⚠️ No changes"
-    git checkout "$base_branch" 2>/dev/null || true
+    [ "$use_worktree" != "true" ] && git checkout "$base_branch" 2>/dev/null || true
     exit 0
 fi
 
-git add -A
+# Stage tracked changes only (avoid accidentally committing symlinks, node_modules etc.)
+git add -u
+# Also stage new files, but exclude common noise
+git ls-files --others --exclude-standard | grep -v 'node_modules' | grep -v '.agents/' | xargs -r git add
 git commit -m "feat: $topic (#$FEATURE_ID)" \
     -m "Co-Authored-By: AI Engineer <agent@factory>" || {
     log "⚠️ Commit failed"
-    git checkout "$base_branch" 2>/dev/null || true
+    [ "$use_worktree" != "true" ] && git checkout "$base_branch" 2>/dev/null || true
     exit 1
 }
 
 git push -u origin "$local_branch" || {
     log "⚠️ Push failed"
-    git checkout "$base_branch" 2>/dev/null || true
+    [ "$use_worktree" != "true" ] && git checkout "$base_branch" 2>/dev/null || true
     exit 1
 }
 
-# Create PR
+# Create PR — use original TARGET_PROJECT (not worktree path) for repo name
+target_repo="${GITHUB_OWNER}/$(basename "${_ORIG_TARGET_PROJECT:-$TARGET_PROJECT}")"
 pr_url=$(gh pr create \
+    --repo "$target_repo" \
     --title "$topic" \
     --body "Implementation for feature #$FEATURE_ID.
 
@@ -123,5 +190,12 @@ feature_set_status "$FEATURE_ID" "review"
 [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
     reply_to_discussion "$discussion" "👷 **Implemented.** PR: $pr_url" "$AGENT" 2>/dev/null || true
 
-git checkout "$base_branch" 2>/dev/null || true
+# Cleanup
+if [ "$use_worktree" = "true" ]; then
+    cd "$TARGET_PROJECT"
+    git worktree remove "$work_dir" 2>/dev/null || true
+    log "  Worktree cleaned up"
+else
+    git checkout "$base_branch" 2>/dev/null || true
+fi
 log "✅ #$FEATURE_ID → PR: $pr_url"

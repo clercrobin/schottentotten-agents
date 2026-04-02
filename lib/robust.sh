@@ -184,9 +184,52 @@ safe_claude() {
     local model="${CLAUDE_MODEL:-sonnet}"
     local budget="${CLAUDE_MAX_BUDGET:-1.00}"
     local pool_size="${MAX_PARALLEL_SESSIONS:-1}"
+    local base_dir="${BASE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+    # ── Agent definition support ──
+    # If an agent definition exists in .claude/agents/<name>.md, use it:
+    #   - System prompt from the agent definition (after frontmatter)
+    #   - allowedTools from frontmatter
+    #   - --add-dir for cross-repo access (factory + target)
+    # Otherwise fall back to passing everything via -p (legacy mode)
+    local agent_def_file="$base_dir/.claude/agents/${agent_name}.md"
+    local agent_system_prompt=""
+    local agent_allowed_tools=""
+    local use_agent_mode=false
+
+    if [ -f "$agent_def_file" ]; then
+        # Extract body (after second ---) as system prompt
+        agent_system_prompt=$(awk 'BEGIN{n=0} /^---$/{n++; next} n>=2{print}' "$agent_def_file")
+        # Extract allowedTools from frontmatter
+        agent_allowed_tools=$(awk '/^---$/,/^---$/' "$agent_def_file" | grep '^allowedTools:' | sed 's/^allowedTools: *//')
+
+        # Inject project-specific rules and style (written by self-improve agent)
+        if [ -n "${PROJECT_DIR:-}" ]; then
+            local rules_file="$PROJECT_DIR/rules.md"
+            local style_file="$PROJECT_DIR/style.md"
+            if [ -f "$rules_file" ]; then
+                agent_system_prompt="$agent_system_prompt
+
+---
+## Project Rules (auto-learned — MUST follow)
+$(cat "$rules_file")"
+            fi
+            if [ -f "$style_file" ]; then
+                agent_system_prompt="$agent_system_prompt
+
+## Project Style (auto-learned — follow conventions)
+$(cat "$style_file")"
+            fi
+        fi
+
+        if [ -n "$agent_system_prompt" ]; then
+            use_agent_mode=true
+        fi
+    fi
 
     echo "  [safe_claude] agent=$agent_name model=$model timeout=${timeout_secs}s budget=\$${budget} slots=$pool_size" >&2
     echo "  [safe_claude] target_dir=$target_dir" >&2
+    echo "  [safe_claude] agent_mode=$use_agent_mode" >&2
     echo "  [safe_claude] extra_args: ${extra_args[*]:-<none>}" >&2
     echo "  [safe_claude] prompt (first 120 chars): ${prompt:0:120}..." >&2
 
@@ -222,16 +265,41 @@ safe_claude() {
     local result=""
     local exit_code=1
 
+    # Build claude command args based on mode
+    local claude_args=()
+    claude_args+=(-p "$prompt")
+    claude_args+=(--model "$model")
+    claude_args+=(--max-budget-usd "$budget")
+    # Non-interactive mode needs permission bypass for tool use
+    claude_args+=(--permission-mode bypassPermissions)
+
+    if [ "$use_agent_mode" = true ]; then
+        # Agent mode: system prompt from definition, --add-dir for factory access
+        claude_args+=(--append-system-prompt "$agent_system_prompt")
+        claude_args+=(--add-dir "$base_dir")
+        # Use allowedTools from agent definition if not already in extra_args
+        if [ -n "$agent_allowed_tools" ]; then
+            local has_tools=false
+            if [ ${#extra_args[@]} -gt 0 ]; then
+                for arg in "${extra_args[@]}"; do
+                    case "$arg" in --allowedTools|--allowed-tools) has_tools=true ;; esac
+                done
+            fi
+            if [ "$has_tools" = false ]; then
+                claude_args+=(--allowedTools "$agent_allowed_tools")
+            fi
+        fi
+    fi
+
+    [ ${#extra_args[@]} -gt 0 ] && claude_args+=("${extra_args[@]}")
+
     for attempt in 1 2; do
         echo "  [safe_claude] Attempt $attempt/2 — invoking claude..." >&2
         local start_time
         start_time=$(date +%s)
 
         result=$(cd "$target_dir" && with_timeout "$timeout_secs" \
-            claude -p "$prompt" \
-            --model "$model" \
-            --max-budget-usd "$budget" \
-            "${extra_args[@]}" \
+            claude "${claude_args[@]}" \
             2>"$error_file")
         exit_code=$?
 
@@ -280,8 +348,6 @@ safe_claude() {
         echo "  [safe_claude] FAILED — all attempts exhausted" >&2
         log_event "$agent_name" "CLAUDE_FAILED" "All attempts failed"
     fi
-
-    return "$exit_code"
 
     return "$exit_code"
 }

@@ -31,6 +31,10 @@ source "$SCRIPT_DIR/lib/state.sh"
 source "$SCRIPT_DIR/lib/robust.sh"
 source "$SCRIPT_DIR/lib/feature-state.sh"
 source "$SCRIPT_DIR/lib/discussions.sh"
+source "$SCRIPT_DIR/lib/ensure-claude-md.sh"
+
+# Ensure target project has a CLAUDE.md before any agent runs
+ensure_claude_md
 
 ACTION="${_AGENT_MODE:-}"
 log() { echo "[$(date '+%H:%M:%S')] [IDEA] $*"; }

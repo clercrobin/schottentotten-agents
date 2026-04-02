@@ -39,15 +39,20 @@ diff_content=$(gh pr diff "$pr_num" --repo "$target_repo" 2>/dev/null | head -c 
 
 log "  Diff: ${#diff_content} chars"
 
-# Review
-review_prompt=$(load_prompt "reviewer-comprehensive") || exit 1
-review_prompt=$(render_prompt "$review_prompt" \
-    TITLE "$topic" \
-    BODY "Feature #$FEATURE_ID — $topic" \
-    DIFF_CONTENT "$diff_content")
+# Dynamic context — reviewer agent definition provides system prompt
+review_prompt="## PR: $topic
 
-review_result=$(safe_claude "$AGENT" "$review_prompt" \
---allowedTools "Bash,Read,Glob,Grep") || exit 1
+## Context:
+Feature #$FEATURE_ID — $topic
+
+## Diff:
+\`\`\`diff
+$diff_content
+\`\`\`
+
+Review this PR. Start with **APPROVED** or **CHANGES REQUESTED**."
+
+review_result=$(safe_claude "reviewer" "$review_prompt") || exit 1
 
 # Post review as PR comment
 gh pr comment "$pr_num" --repo "$target_repo" --body "$review_result" 2>/dev/null || true
@@ -63,7 +68,8 @@ else
     note=""
     note=$(echo "$review_result" | grep -i "P1\|must fix\|CHANGES" | head -3 | tr '\n' ' ')
     feature_add_feedback "$FEATURE_ID" "reviewer" "changes-requested" "$note"
+    feature_set_status "$FEATURE_ID" "building"  # send back to engineer
     [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
-        reply_to_discussion "$discussion" "🔄 **Changes requested.** See PR #$pr_num." "$AGENT" 2>/dev/null || true
-    log "🔄 Changes requested #$FEATURE_ID"
+        reply_to_discussion "$discussion" "🔄 **Changes requested.** Engineer will fix." "$AGENT" 2>/dev/null || true
+    log "🔄 Changes requested #$FEATURE_ID → back to building"
 fi

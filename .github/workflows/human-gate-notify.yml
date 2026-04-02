@@ -1,0 +1,24 @@
+name: Human Gate Notification
+
+# Fires when a new Discussion is created in the agents repo
+# Filters for Q&A category (agent questions for the human)
+on:
+  discussion:
+    types: [created]
+
+jobs:
+  notify:
+    if: contains(github.event.discussion.category.name, 'Q&A') && contains(github.event.discussion.title, 'Decision needed')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post notification
+        env:
+          DISC_URL: ${{ github.event.discussion.html_url }}
+          DISC_TITLE: ${{ github.event.discussion.title }}
+        run: |
+          echo "## Agent needs your input" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Discussion:** $DISC_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Title:** $DISC_TITLE" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Reply to the discussion to unblock the agents." >> "$GITHUB_STEP_SUMMARY"

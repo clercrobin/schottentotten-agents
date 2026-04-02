@@ -1,0 +1,23 @@
+# Runtime state (per-project, regenerated)
+state/
+projects/*/state/
+projects/*/logs/
+
+# Logs
+logs/
+*.log
+
+# Lock artifacts
+*.lock
+*.d/
+
+# macOS
+.DS_Store
+
+# Launchd artifacts
+launchd-wrapper.sh
+
+# Editor
+.vscode/
+*.swp
+*~

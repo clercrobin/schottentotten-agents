@@ -33,6 +33,7 @@ source "$SCRIPT_DIR/lib/robust.sh"
 source "$SCRIPT_DIR/lib/feature-state.sh"
 source "$SCRIPT_DIR/lib/discussions.sh"
 source "$SCRIPT_DIR/lib/sync-agents-repo.sh"
+source "$SCRIPT_DIR/lib/ensure-claude-md.sh"
 
 ACTION="${_AGENT_MODE:-}"
 log() { echo "[$(date '+%H:%M:%S')] [FEAT] $*"; }
@@ -90,8 +91,11 @@ process_feature() {
     local fid="$1"
     local t0 max_iter iter
     t0=$(date +%s)
-    max_iter=12
+    max_iter=20
     iter=0
+
+    # Ensure target project has a CLAUDE.md (auto-generates if missing)
+    ensure_claude_md
 
     log "═══ Feature #$fid ═══"
 
@@ -130,8 +134,71 @@ process_feature() {
 
                 log "  🔀 Merging PR #$pr_num to $staging_branch"
                 if ! gh pr merge "$pr_num" --repo "$target_repo" --squash --delete-branch 2>/dev/null; then
-                    log "  ⚠️ Merge failed"
-                    break
+                    # Merge failed — likely conflict. Rebase branch onto staging and retry.
+                    local branch_name
+                    branch_name=$(feature_field "$fid" "branch")
+                    log "  ⚠️ Merge failed — attempting rebase of $branch_name onto $staging_branch"
+
+                    local rebase_ok=false
+                    if [ -n "$branch_name" ]; then
+                        cd "$TARGET_PROJECT"
+                        git fetch origin 2>/dev/null
+                        git checkout "$branch_name" 2>/dev/null || git checkout -b "$branch_name" "origin/$branch_name" 2>/dev/null
+                        if git rebase "origin/$staging_branch" 2>/dev/null; then
+                            git push --force-with-lease origin "$branch_name" 2>/dev/null && rebase_ok=true
+                        else
+                            git rebase --abort 2>/dev/null
+                        fi
+                        git checkout "$staging_branch" 2>/dev/null || true
+                    fi
+
+                    # Helper: full cleanup of stale branch/PR/worktree
+                    _reset_for_fresh_build() {
+                        local _fid="$1" _pr="$2" _branch="$3" _repo="$4" _base="$5"
+                        log "  🧹 Full cleanup: PR#$_pr, branch=$_branch"
+                        cd "$TARGET_PROJECT"
+                        git checkout "$_base" 2>/dev/null || true
+                        git rebase --abort 2>/dev/null || true
+                        # Close stale PR + delete remote branch
+                        gh pr close "$_pr" --repo "$_repo" --delete-branch 2>/dev/null || true
+                        # Delete local branch
+                        [ -n "$_branch" ] && git branch -D "$_branch" 2>/dev/null || true
+                        # Clean up any worktree for this feature
+                        local wt_dir="/tmp/agent-wt-${_fid}"
+                        [ -d "$wt_dir" ] && git worktree remove "$wt_dir" --force 2>/dev/null || true
+                        # Reset state — triage if feedback exists (plan needs rework), approved otherwise
+                        feature_set "$_fid" "branch" ""
+                        feature_set "$_fid" "pr" ""
+                        local has_feedback
+                        has_feedback=$(python3 -c "
+import json, os
+d = json.load(open(os.path.join('${_FEATURE_DIR}', '${_fid}.json')))
+print('yes' if d.get('feedback') else 'no')
+" 2>/dev/null || echo "no")
+                        if [ "$has_feedback" = "yes" ]; then
+                            feature_set_status "$_fid" "triage"
+                            log "  → Reset to triage (has feedback — planner will amend plan)"
+                        else
+                            feature_set_status "$_fid" "approved"
+                            log "  → Reset to approved (no feedback — engineer will rebuild)"
+                        fi
+                    }
+
+                    if [ "$rebase_ok" = true ]; then
+                        log "  🔄 Rebased — retrying merge"
+                        if ! gh pr merge "$pr_num" --repo "$target_repo" --squash --delete-branch 2>/dev/null; then
+                            log "  ⚠️ Merge still failed after rebase"
+                            _reset_for_fresh_build "$fid" "$pr_num" "$branch_name" "$target_repo" "$staging_branch"
+                        fi
+                    else
+                        log "  ⚠️ Rebase failed — conflict too complex"
+                        _reset_for_fresh_build "$fid" "$pr_num" "$branch_name" "$target_repo" "$staging_branch"
+                    fi
+
+                    # If merge didn't succeed, loop will pick up new status (approved → engineer)
+                    local merge_check
+                    merge_check=$(feature_field "$fid" "status")
+                    [ "$merge_check" != "reviewed" ] && continue
                 fi
                 log "  ✅ Merged to $staging_branch"
 
@@ -179,7 +246,24 @@ process_feature() {
             break
         fi
         if [ "$new_status" = "$status" ]; then
-            log "  ⚠️ Status unchanged ($status) — stopping"
+            # Stuck — agent ran but didn't advance. Add feedback and reset to triage
+            # so the planner can amend the plan (likely stale or already implemented).
+            log "  ⚠️ Status unchanged ($status) — agent couldn't advance"
+            if [ "$status" = "building" ] || [ "$status" = "approved" ]; then
+                feature_add_feedback "$fid" "pipeline" "stuck" \
+                    "Engineer ran but produced no changes on status=$status. Plan may describe already-merged work or be too vague."
+                # Clean up worktree/branch
+                local stuck_branch stuck_wt
+                stuck_branch=$(feature_field "$fid" "branch")
+                stuck_wt="/tmp/agent-wt-${fid}"
+                [ -d "$stuck_wt" ] && (cd "$TARGET_PROJECT" && git worktree remove "$stuck_wt" --force 2>/dev/null) || true
+                [ -n "$stuck_branch" ] && (cd "$TARGET_PROJECT" && git branch -D "$stuck_branch" 2>/dev/null) || true
+                feature_set "$fid" "branch" ""
+                feature_set "$fid" "pr" ""
+                feature_set_status "$fid" "triage"
+                log "  → Reset to triage — planner will amend plan with feedback"
+                continue
+            fi
             break
         fi
         log "  → $status → $new_status"
@@ -204,8 +288,17 @@ process_feature() {
 # ────────────────────────────────────────────
 # Main
 # ────────────────────────────────────────────
+# Check for human feedback on discussions before processing
+check_human_feedback() {
+    log "💬 Checking for human feedback..."
+    PROJECT_NAME="$PROJECT_NAME" ENV_NAME="$ENV_NAME" \
+        bash "$SCRIPT_DIR/agents/product-manager.sh" check-feedback 2>&1 | \
+        tee -a "${LOG_DIR:-logs}/feature.log"
+}
+
 case "$ACTION" in
     --next)
+        check_human_feedback
         fid=$(feature_find_by_status "triage" "planning" "approved" "building" "review" "reviewed")
         if [ -n "$fid" ]; then
             process_feature "$fid"
@@ -217,6 +310,7 @@ case "$ACTION" in
         log "🔁 Feature pipeline loop"
         trap 'log "🛑 Stopping"; pkill -P $$ 2>/dev/null; exit 0' INT TERM
         while true; do
+            check_human_feedback
             fid=$(feature_find_by_status "triage" "planning" "approved" "building" "review" "reviewed")
             if [ -n "$fid" ]; then
                 process_feature "$fid"
