@@ -148,9 +148,10 @@ run_check_feedback() {
         status=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('status',''))")
         disc_num=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('discussion') or '')")
 
-        # Skip features without discussions, or already done/triage
+        # Skip features without discussions, or already in triage
+        # "done" features CAN be reopened by new human feedback
         [ -z "$disc_num" ] || [ "$disc_num" = "None" ] && continue
-        [ "$status" = "done" ] || [ "$status" = "triage" ] && continue
+        [ "$status" = "triage" ] && continue
 
         # Get last feedback timestamp from state (to avoid re-processing)
         last_feedback_ts=$(python3 -c "
