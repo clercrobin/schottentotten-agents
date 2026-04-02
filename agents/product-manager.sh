@@ -184,9 +184,18 @@ last_ts = '$last_feedback_ts'
 comments = json.loads(sys.stdin.read())
 
 for c in comments:
-    # Skip agent comments (they contain Agent markers)
+    # Skip agent/bot comments — check first 200 chars for ANY known marker
     body = c.get('body', '')
-    if any(marker in body[:50] for marker in ['[🤖', '[engineer]', '[reviewer]', '[planner]', 'Agent', '📋 **', '👷 **', '🔎 **', '✅ **', '📊 **']):
+    header = body[:200]
+    agent_markers = [
+        '**[', '[🤖', '[engineer]', '[reviewer]', '[planner]',
+        'Agent', '📋 **', '👷 **', '🔎 **', '✅ **', '📊 **',
+        '🔧 Feature Pipeline', '📦 Release Pipeline',
+        '🚦 Agent', '🧬 Agent', '🛡️ Agent',
+        '· \`staging\`', '· \`prod\`',
+        '**Status:**', '**Tracked by Agent',
+    ]
+    if any(marker in header for marker in agent_markers):
         continue
 
     # Skip if older than last processed feedback
