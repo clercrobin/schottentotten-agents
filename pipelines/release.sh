@@ -72,6 +72,40 @@ check_release() {
     }' --jq '[.data.repository.discussions.nodes[] | select(.category.name == "Q&A") | select(.title | contains("Ready for prod"))] | length' 2>/dev/null || echo "0")
 
     if [ "$pending" -gt 0 ]; then
+        # Check if staging has new commits since the Q&A was posted
+        # If so, close the stale Q&A and post a fresh one
+        local qa_sha
+        qa_sha=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
+        query($owner: String!, $repo: String!) {
+          repository(owner: $owner, name: $repo) {
+            discussions(first: 5, states: OPEN) {
+              nodes { number title body category { name } }
+            }
+          }
+        }' --jq '[.data.repository.discussions.nodes[] | select(.category.name == "Q&A") | select(.title | contains("Ready for prod"))][0].title' 2>/dev/null | grep -oE '[a-f0-9]{7,}' || echo "")
+
+        local current_sha
+        current_sha=$(git rev-parse --short "origin/$from_branch" 2>/dev/null)
+
+        if [ -n "$qa_sha" ] && [ -n "$current_sha" ] && [ "$qa_sha" != "$current_sha" ]; then
+            log "Staging moved ($qa_sha → $current_sha) — closing stale Q&A"
+            local stale_num
+            stale_num=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                discussions(first: 5, states: OPEN) {
+                  nodes { number title id category { name } }
+                }
+              }
+            }' --jq '[.data.repository.discussions.nodes[] | select(.category.name == "Q&A") | select(.title | contains("Ready for prod"))][0]' 2>/dev/null)
+
+            local stale_id
+            stale_id=$(echo "$stale_num" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+            [ -n "$stale_id" ] && gh api graphql -f id="$stale_id" -f query='mutation($id: ID!) { closeDiscussion(input: { discussionId: $id, reason: OUTDATED }) { discussion { number } } }' 2>/dev/null || true
+            # Fall through to post a new Q&A below
+            pending=0
+        fi
+
         # Check if human already replied "approve"
         local approved
         approved=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
