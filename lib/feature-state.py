@@ -91,11 +91,11 @@ elif cmd == "find-next":
     # "advancement" = how far along the pipeline (finish started work first)
     # "criticality" = business importance (critical > high > medium > low)
     statuses = set(sys.argv[2:]) if len(sys.argv) > 2 else {
-        "triage", "planning", "approved", "building", "review", "reviewed"
+        "triage", "planning", "approved", "building", "testing", "review", "reviewed"
     }
     advancement = {
-        "reviewed": 0, "review": 1, "building": 2,
-        "approved": 3, "planning": 4, "triage": 5
+        "reviewed": 0, "review": 1, "testing": 2, "building": 3,
+        "approved": 4, "planning": 5, "triage": 6
     }
     criticality = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
