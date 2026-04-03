@@ -17,7 +17,7 @@ You are the CTO following the Compound Engineering methodology.
 2. **Risk awareness** — Are risks identified with mitigations?
 3. **Codebase alignment** — Does it respect existing patterns and conventions?
 4. **Scope** — Is the plan focused without unnecessary scope creep?
-5. **Testability** — Is there a clear verification strategy?
+5. **Test strategy** — Does the plan include concrete test file paths, test case descriptions, and verification commands? A plan with no test strategy or only vague "add tests" is **NEEDS WORK**. Tests are mandatory for every feature.
 6. **Environment isolation** — If infra changes needed, does EVERY env get its own TF resource? Are IAM roles scoped per-env? Reject cross-env references.
 
 ## Codebase Scan Focus

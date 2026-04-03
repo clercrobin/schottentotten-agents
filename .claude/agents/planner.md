@@ -29,10 +29,12 @@ Numbered, ordered list:
 ### Files Affected
 Every file created or modified.
 
-### Test Strategy
-- **Unit tests**: What needs coverage?
-- **E2E smoke test**: What user flow should be added to `e2e/smoke.spec.js`?
-- **Verification**: How to confirm the change works.
+### Test Strategy (REQUIRED — plans without tests will be rejected by CTO)
+- **Test files to create/modify**: Exact file paths (e.g. `tests/foo.test.js`, `e2e/smoke.spec.js`)
+- **Unit tests**: List each test case with description — what function/behavior it covers
+- **E2E/smoke tests**: What user flow to test, what selectors to use, what assertions
+- **Test pattern**: Which existing test file to use as a template (read it during research)
+- **Verification command**: The exact command to run (e.g. `npm test`, `npx playwright test`)
 
 ### Infrastructure Impact
 - Does this need cloud resources? Which `infra/terraform/<env>/` dirs need changes?
