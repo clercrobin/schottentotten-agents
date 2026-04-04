@@ -26,8 +26,12 @@ YAGNI violations, unnecessary abstractions, dead code, readability, naming, nest
 ### 6. Deployment Safety
 Env var changes, migration order, feature flags, rollback plan, breaking API changes.
 
-### 7. Test Coverage
-Are critical paths tested? Are edge cases covered? Are there regression tests for bug fixes?
+### 7. Test Coverage (BLOCKING)
+Every PR MUST include tests. If the diff contains no test files, this is an automatic **CHANGES REQUESTED** with P1.
+- Are new functions/behaviors covered by unit tests?
+- Are edge cases and error cases tested?
+- For UI/CSS changes: are there e2e/smoke tests?
+- Do the tests actually assert meaningful behavior (not just "it renders")?
 
 ## Output Format
 

@@ -34,6 +34,7 @@ source "$SCRIPT_DIR/lib/feature-state.sh"
 source "$SCRIPT_DIR/lib/discussions.sh"
 source "$SCRIPT_DIR/lib/sync-agents-repo.sh"
 source "$SCRIPT_DIR/lib/ensure-claude-md.sh"
+source "$SCRIPT_DIR/lib/test-detect.sh"
 
 ACTION="${_AGENT_MODE:-}"
 log() { echo "[$(date '+%H:%M:%S')] [FEAT] $*"; }
@@ -116,6 +117,88 @@ process_feature() {
                 ;;
             approved|building)
                 run_agent "senior-engineer.sh" "$fid"
+                ;;
+            testing)
+                # Run tests on the PR branch, generate missing tests if needed
+                local pr_num_test target_repo_test
+                pr_num_test=$(feature_field "$fid" "pr")
+                target_repo_test="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
+                local branch_test
+                branch_test=$(feature_field "$fid" "branch")
+
+                if [ -z "$pr_num_test" ] || [ "$pr_num_test" = "None" ]; then
+                    log "  ⚠️ No PR for testing — skipping to review"
+                    feature_set_status "$fid" "review"
+                    continue
+                fi
+
+                log "  🧪 Running tests on $branch_test"
+
+                # Checkout the branch and run tests
+                cd "$TARGET_PROJECT"
+                git fetch origin 2>/dev/null || true
+                git checkout "$branch_test" 2>/dev/null || git checkout -b "$branch_test" "origin/$branch_test" 2>/dev/null || {
+                    log "  ⚠️ Cannot checkout $branch_test — skipping to review"
+                    feature_set_status "$fid" "review"
+                    continue
+                }
+
+                local test_results test_exit
+                test_results=$(detect_and_run_tests 2>&1)
+                test_exit=$?
+
+                if [ "$test_exit" -eq 0 ]; then
+                    log "  ✅ Tests pass"
+                    # Post results as PR comment
+                    gh pr comment "$pr_num_test" --repo "$target_repo_test" \
+                        --body "## 🧪 Test Results: ✅ ALL PASSING
+$test_results" 2>/dev/null || true
+                    feature_set_status "$fid" "review"
+                elif [ "$test_exit" -eq 2 ]; then
+                    log "  ⚠️ No test runner detected — generating tests"
+                    # Run QA writer to generate tests, then re-test
+                    local diff_content
+                    diff_content=$(git diff "origin/${DEPLOY_BRANCH:-staging}...$branch_test" 2>/dev/null | head -c 8000)
+
+                    local qa_prompt="Generate tests for these changes. Follow existing test patterns in the project.
+
+## Changes
+\`\`\`diff
+$diff_content
+\`\`\`
+
+Write the test files. Run them to verify they pass. Stage with git add."
+                    TARGET_PROJECT="$TARGET_PROJECT" safe_claude "engineer" "$qa_prompt" >/dev/null 2>&1 || true
+
+                    # Commit + push generated tests
+                    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+                        git add -u
+                        git ls-files --others --exclude-standard | grep -v 'node_modules' | xargs -r git add
+                        git commit -m "test: add tests for #$fid" \
+                            -m "Co-Authored-By: AI QA Writer <agent@factory>" 2>/dev/null || true
+                        git push 2>/dev/null || true
+                        log "  🧪 Tests generated and pushed"
+                    fi
+
+                    # Re-run tests
+                    test_results=$(detect_and_run_tests 2>&1)
+                    test_exit=$?
+                    gh pr comment "$pr_num_test" --repo "$target_repo_test" \
+                        --body "## 🧪 Test Results$([ "$test_exit" -eq 0 ] && echo ': ✅ PASSING' || echo ': ⚠️ PARTIAL')
+$test_results" 2>/dev/null || true
+                    feature_set_status "$fid" "review"
+                else
+                    log "  ❌ Tests FAILED — sending back to engineer"
+                    gh pr comment "$pr_num_test" --repo "$target_repo_test" \
+                        --body "## 🧪 Test Results: ❌ FAILURES
+$test_results
+
+Engineer will fix." 2>/dev/null || true
+                    feature_add_feedback "$fid" "test-runner" "failing" \
+                        "Tests failed on branch $branch_test: $(echo "$test_results" | grep -i 'FAIL' | head -3 | tr '\n' ' ')"
+                    feature_set_status "$fid" "building"
+                fi
+                git checkout "${DEPLOY_BRANCH:-staging}" 2>/dev/null || true
                 ;;
             review)
                 run_agent "reviewer.sh" "$fid"
@@ -299,7 +382,7 @@ check_human_feedback() {
 case "$ACTION" in
     --next)
         check_human_feedback
-        fid=$(feature_find_by_status "triage" "planning" "approved" "building" "review" "reviewed")
+        fid=$(feature_find_by_status "triage" "planning" "approved" "building" "testing" "review" "reviewed")
         if [ -n "$fid" ]; then
             process_feature "$fid"
         else
@@ -311,7 +394,7 @@ case "$ACTION" in
         trap 'log "🛑 Stopping"; pkill -P $$ 2>/dev/null; exit 0' INT TERM
         while true; do
             check_human_feedback
-            fid=$(feature_find_by_status "triage" "planning" "approved" "building" "review" "reviewed")
+            fid=$(feature_find_by_status "triage" "planning" "approved" "building" "testing" "review" "reviewed")
             if [ -n "$fid" ]; then
                 process_feature "$fid"
             else

@@ -182,8 +182,8 @@ $result" \
 # Extract PR number
 pr_num=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
 
-# Update state
-feature_set_status "$FEATURE_ID" "review"
+# Update state — go to testing (tests run before review)
+feature_set_status "$FEATURE_ID" "testing"
 [ -n "$pr_num" ] && feature_set "$FEATURE_ID" "pr" "$pr_num"
 
 # Post summary to Discussion
