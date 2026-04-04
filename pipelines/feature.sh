@@ -332,23 +332,66 @@ print('yes' if d.get('feedback') else 'no')
             break
         fi
         if [ "$new_status" = "$status" ]; then
-            # Stuck — agent ran but didn't advance. Add feedback and reset to triage
-            # so the planner can amend the plan (likely stale or already implemented).
+            # Stuck — agent ran but didn't advance.
             log "  ⚠️ Status unchanged ($status) — agent couldn't advance"
             if [ "$status" = "building" ] || [ "$status" = "approved" ]; then
-                feature_add_feedback "$fid" "pipeline" "stuck" \
-                    "Engineer ran but produced no changes on status=$status. Plan may describe already-merged work or be too vague."
-                # Clean up worktree/branch
-                local stuck_branch stuck_wt
-                stuck_branch=$(feature_field "$fid" "branch")
-                stuck_wt="/tmp/agent-wt-${fid}"
-                [ -d "$stuck_wt" ] && (cd "$TARGET_PROJECT" && git worktree remove "$stuck_wt" --force 2>/dev/null) || true
-                [ -n "$stuck_branch" ] && (cd "$TARGET_PROJECT" && git branch -D "$stuck_branch" 2>/dev/null) || true
-                feature_set "$fid" "branch" ""
-                feature_set "$fid" "pr" ""
-                feature_set_status "$fid" "triage"
-                log "  → Reset to triage — planner will amend plan with feedback"
-                continue
+                # Track stuck count for model escalation
+                local stuck_count
+                stuck_count=$(python3 -c "
+import json, os
+d = json.load(open(os.path.join('${_FEATURE_DIR}', '${fid}.json')))
+print(d.get('stuck_count', 0))
+" 2>/dev/null || echo "0")
+                stuck_count=$((stuck_count + 1))
+                python3 -c "
+import json, os
+path = os.path.join('${_FEATURE_DIR}', '${fid}.json')
+d = json.load(open(path))
+d['stuck_count'] = $stuck_count
+json.dump(d, open(path, 'w'), indent=2)
+" 2>/dev/null
+
+                if [ "$stuck_count" -le 1 ]; then
+                    # First stuck: give focused feedback, stay in building
+                    feature_add_feedback "$fid" "pipeline" "stuck" \
+                        "Engineer produced no changes. Focus on implementing ONLY the first step of the plan. Make one concrete file change."
+                    log "  → Retry with focused prompt (stuck_count=$stuck_count)"
+                    continue
+                elif [ "$stuck_count" -le 3 ]; then
+                    # 2nd-3rd stuck: reset to triage for replanning
+                    feature_add_feedback "$fid" "pipeline" "stuck" \
+                        "Engineer stuck $stuck_count times. Plan may be too complex or vague. Break into smaller steps with exact file paths and code."
+                    # Clean up worktree/branch
+                    local stuck_branch stuck_wt
+                    stuck_branch=$(feature_field "$fid" "branch")
+                    stuck_wt="/tmp/agent-wt-${fid}"
+                    [ -d "$stuck_wt" ] && (cd "$TARGET_PROJECT" && git worktree remove "$stuck_wt" --force 2>/dev/null) || true
+                    [ -n "$stuck_branch" ] && [ "$stuck_branch" != "staging" ] && \
+                        (cd "$TARGET_PROJECT" && git branch -D "$stuck_branch" 2>/dev/null; git push origin --delete "$stuck_branch" 2>/dev/null) || true
+                    feature_set "$fid" "branch" ""
+                    feature_set "$fid" "pr" ""
+                    feature_set_status "$fid" "triage"
+                    log "  → Reset to triage (stuck_count=$stuck_count)"
+                    continue
+                else
+                    # 4+ stuck: escalate to opus
+                    log "  🔺 Escalating to opus (stuck_count=$stuck_count)"
+                    feature_add_feedback "$fid" "pipeline" "escalated" \
+                        "Sonnet failed $stuck_count times. Escalating to opus model."
+                    # Clean up
+                    local stuck_branch stuck_wt
+                    stuck_branch=$(feature_field "$fid" "branch")
+                    stuck_wt="/tmp/agent-wt-${fid}"
+                    [ -d "$stuck_wt" ] && (cd "$TARGET_PROJECT" && git worktree remove "$stuck_wt" --force 2>/dev/null) || true
+                    [ -n "$stuck_branch" ] && [ "$stuck_branch" != "staging" ] && \
+                        (cd "$TARGET_PROJECT" && git branch -D "$stuck_branch" 2>/dev/null; git push origin --delete "$stuck_branch" 2>/dev/null) || true
+                    feature_set "$fid" "branch" ""
+                    feature_set "$fid" "pr" ""
+                    feature_set "$fid" "model" "opus"
+                    feature_set_status "$fid" "triage"
+                    log "  → Reset to triage with opus model (stuck_count=$stuck_count)"
+                    continue
+                fi
             fi
             break
         fi

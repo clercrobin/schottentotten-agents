@@ -103,6 +103,17 @@ feature_set_status "$FEATURE_ID" "building"
 feature_set "$FEATURE_ID" "branch" "$local_branch"
 _ORIG_TARGET_PROJECT="$TARGET_PROJECT"
 
+# Check for model override (escalation from stuck detection)
+feature_model=$(python3 -c "
+import json, os
+d = json.load(open(os.path.join('${_FEATURE_DIR}', '${FEATURE_ID}.json')))
+print(d.get('model', ''))
+" 2>/dev/null)
+[ -n "$feature_model" ] && {
+    export CLAUDE_MODEL="$feature_model"
+    log "  🔺 Using escalated model: $CLAUDE_MODEL"
+}
+
 # Build prompt — include feedback if rebuilding after failure
 feedback=""
 if [ "$status" = "building" ]; then
