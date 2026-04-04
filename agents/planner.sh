@@ -26,6 +26,13 @@ topic=$(feature_field "$FEATURE_ID" "topic")
 plan_file=$(feature_field "$FEATURE_ID" "plan")
 discussion=$(feature_field "$FEATURE_ID" "discussion")
 
+# Check for model override (escalation from stuck detection)
+feature_model=$(feature_field "$FEATURE_ID" "model" 2>/dev/null)
+[ -n "$feature_model" ] && [ "$feature_model" != "None" ] && {
+    export CLAUDE_MODEL="$feature_model"
+    log "  🔺 Using escalated model: $CLAUDE_MODEL"
+}
+
 log "📋 Planning #$FEATURE_ID: $topic"
 
 # Check for prior feedback
