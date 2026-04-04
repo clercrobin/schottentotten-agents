@@ -370,6 +370,25 @@ Review this plan. Start with **APPROVED** or **NEEDS WORK**."
         local note
         note=$(echo "$response" | head -5 | tr '\n' ' ')
         feature_add_feedback "$fid" "cto" "needs-work" "$note"
+
+        # Track CTO rejection count for planner escalation
+        local reject_count
+        reject_count=$(python3 -c "
+import json, os
+d = json.load(open(os.path.join('${_FEATURE_DIR}', '${fid}.json')))
+rc = d.get('reject_count', 0) + 1
+d['reject_count'] = rc
+if rc >= 3 and not d.get('model'):
+    d['model'] = 'opus'
+    print(f'ESCALATE:{rc}')
+else:
+    print(f'REJECT:{rc}')
+json.dump(d, open(os.path.join('${_FEATURE_DIR}', '${fid}.json'), 'w'), indent=2)
+" 2>/dev/null)
+        if [[ "$reject_count" == ESCALATE* ]]; then
+            log "🔺 CTO rejected ${reject_count#*:} times — escalating planner to opus"
+        fi
+
         feature_set_status "$fid" "triage"
         [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
             reply_to_discussion "$discussion" "🔄 **Plan needs work.** Planner will iterate." "$AGENT_CTO" 2>/dev/null || true
