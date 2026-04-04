@@ -57,31 +57,32 @@ run_agent() {
 run_smoke_test() {
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
     local staging_branch="${DEPLOY_BRANCH:-staging}"
+    local deploy_workflow="${DEPLOY_WORKFLOW:-Deploy Staging}"
 
-    # Wait for CI to trigger
-    log "  ⏳ Waiting for staging CI..."
+    # Wait for staging deploy workflow to trigger
+    log "  ⏳ Waiting for staging workflow: $deploy_workflow"
     sleep 30
 
-    # Check latest staging CI
+    # Check latest staging deployment workflow
     local attempts=0
     while [ "$attempts" -lt 10 ]; do
         attempts=$((attempts + 1))
         local ci_status
-        ci_status=$(gh run list --repo "$target_repo" --branch "$staging_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+        ci_status=$(gh run list --repo "$target_repo" --workflow "$deploy_workflow" --branch "$staging_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
 
         if [ "$ci_status" = "success" ]; then
-            log "  ✅ Staging CI green (smoke tests passed)"
+            log "  ✅ $deploy_workflow green"
             return 0
         elif [ "$ci_status" = "failure" ]; then
-            log "  ❌ Staging CI failed"
+            log "  ❌ $deploy_workflow failed"
             return 1
         fi
 
-        log "  ⏳ CI: $ci_status (attempt $attempts/10)"
+        log "  ⏳ $deploy_workflow: $ci_status (attempt $attempts/10)"
         sleep 30
     done
 
-    log "  ⚠️ CI didn't complete in time"
+    log "  ⚠️ $deploy_workflow didn't complete in time"
     return 1
 }
 
@@ -137,7 +138,9 @@ process_feature() {
                 # Checkout the branch and run tests
                 cd "$TARGET_PROJECT"
                 git fetch origin 2>/dev/null || true
-                git checkout "$branch_test" 2>/dev/null || git checkout -b "$branch_test" "origin/$branch_test" 2>/dev/null || {
+                # Branch may have been cleaned up by worktree — recreate from remote
+                git branch -D "$branch_test" 2>/dev/null || true
+                git checkout -b "$branch_test" "origin/$branch_test" 2>/dev/null || {
                     log "  ⚠️ Cannot checkout $branch_test — skipping to review"
                     feature_set_status "$fid" "review"
                     continue

@@ -151,10 +151,17 @@ if git diff --cached --quiet && git diff --quiet; then
     exit 0
 fi
 
+# Clean up anything Claude's session may have staged incorrectly
+git reset HEAD -- node_modules/ .agents/ dist/ build/ 2>/dev/null || true
+git checkout -- node_modules/ 2>/dev/null || true
+
 # Stage tracked changes only (avoid accidentally committing symlinks, node_modules etc.)
 git add -u
 # Also stage new files, but exclude common noise
-git ls-files --others --exclude-standard | grep -v 'node_modules' | grep -v '.agents/' | xargs -r git add
+git ls-files --others --exclude-standard | grep -v 'node_modules' | grep -v '.agents/' | grep -v 'dist/' | grep -v 'build/' | xargs -r git add
+
+# Final safety: unstage anything that shouldn't be committed
+git reset HEAD -- node_modules/ .agents/ dist/ build/ 2>/dev/null || true
 git commit -m "feat: $topic (#$FEATURE_ID)" \
     -m "Co-Authored-By: AI Engineer <agent@factory>" || {
     log "⚠️ Commit failed"
