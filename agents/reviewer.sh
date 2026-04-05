@@ -68,6 +68,18 @@ else
     note=""
     note=$(echo "$review_result" | grep -i "P1\|must fix\|CHANGES" | head -3 | tr '\n' ' ')
     feature_add_feedback "$FEATURE_ID" "reviewer" "changes-requested" "$note"
+
+    # Track reviewer rejection count for model escalation
+    python3 -c "
+import json, os
+path = os.path.join('${_FEATURE_DIR}', '${FEATURE_ID}.json')
+d = json.load(open(path))
+rc = len([fb for fb in d.get('feedback', []) if fb.get('by') == 'reviewer'])
+if rc >= 3 and not d.get('model'):
+    d['model'] = 'opus'
+    print(f'ESCALATE to opus after {rc} reviewer rejections')
+json.dump(d, open(path, 'w'), indent=2)
+" 2>/dev/null | while read -r msg; do log "  🔺 $msg"; done
     feature_set_status "$FEATURE_ID" "building"  # send back to engineer
     [ -n "$discussion" ] && [ "$discussion" != "null" ] && \
         reply_to_discussion "$discussion" "🔄 **Changes requested.** Engineer will fix." "$AGENT" 2>/dev/null || true
