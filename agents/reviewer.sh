@@ -33,7 +33,17 @@ log "🔎 Reviewing #$FEATURE_ID: $topic (PR #$pr_num)"
 target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
 
 # Get diff directly — no Discussion parsing
-diff_content=$(gh pr diff "$pr_num" --repo "$target_repo" 2>/dev/null | head -c 12000)
+full_diff=$(gh pr diff "$pr_num" --repo "$target_repo" 2>/dev/null)
+full_diff_len=${#full_diff}
+diff_content=$(echo "$full_diff" | head -c 30000)
+# If truncated, note which files are in the full diff
+if [ "$full_diff_len" -gt 30000 ]; then
+    diff_files=$(echo "$full_diff" | grep '^diff --git' | sed 's|diff --git a/||;s| b/.*||')
+    diff_content="$diff_content
+
+--- DIFF TRUNCATED ($full_diff_len chars) ---
+Full file list: $diff_files"
+fi
 
 [ -z "$diff_content" ] && { log "No diff for PR #$pr_num"; exit 0; }
 
