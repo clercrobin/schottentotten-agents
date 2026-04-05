@@ -34,6 +34,7 @@ check_release() {
     local target_repo="${GITHUB_OWNER}/$(basename "$TARGET_PROJECT")"
     local from_branch="${DEPLOY_BRANCH:-staging}"
     local to_branch="main"
+    local deploy_workflow="${DEPLOY_WORKFLOW:-Deploy Staging}"
 
     log "Checking: $from_branch → $to_branch"
 
@@ -51,12 +52,12 @@ check_release() {
 
     log "Staging: +$ahead commits"
 
-    # CI status
+    # Staging deploy workflow status
     local ci_status
-    ci_status=$(gh run list --repo "$target_repo" --branch "$from_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+    ci_status=$(gh run list --repo "$target_repo" --workflow "$deploy_workflow" --branch "$from_branch" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
 
     if [ "$ci_status" != "success" ]; then
-        log "CI: $ci_status — not ready"
+        log "$deploy_workflow: $ci_status — not ready"
         return 0
     fi
 
@@ -102,11 +103,13 @@ check_release() {
             local stale_id
             stale_id=$(echo "$stale_num" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
             [ -n "$stale_id" ] && gh api graphql -f id="$stale_id" -f query='mutation($id: ID!) { closeDiscussion(input: { discussionId: $id, reason: OUTDATED }) { discussion { number } } }' 2>/dev/null || true
-            # Fall through to post a new Q&A below
+            # Closed stale Q&A — fall through to post a new one
             pending=0
         fi
+    fi
 
-        # Check if human already replied "approve"
+    if [ "$pending" -gt 0 ]; then
+        # Q&A exists and is current — check if human replied "approve"
         local approved
         approved=$(gh api graphql -F owner="$GITHUB_OWNER" -F repo="$GITHUB_REPO" -f query='
         query($owner: String!, $repo: String!) {
